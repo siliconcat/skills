@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Audit how a director session spawned and reused its workers.
+# Usage: director-audit [--previous | session.jsonl ...]
+#   default: latest session of the current directory; --previous: the one before it (run at session start)
+set -euo pipefail
+
+if [[ $# -eq 0 || $1 == --previous ]]; then
+  nth=1; [[ ${1:-} == --previous ]] && nth=2
+  dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(pwd | sed 's/[^A-Za-z0-9-]/-/g')
+  latest=$(ls -t -- "$dir"/*.jsonl 2>/dev/null | sed -n "${nth}p") || true
+  [[ -n $latest ]] || { echo "director-audit: no session #$nth in $dir" >&2; exit 1; }
+  set -- "$latest"
+fi
+
+# backticked terms and absolute paths that briefs to one role repeat across requests, missing from its role file
+repeated_background() {
+  local file=$1 cwd=$2 role tok
+  jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use" and .name=="Agent") | .input
+    | (.subagent_type // "general-purpose") as $t | ((.prompt // "") | (first(scan("R-[0-9]{4}")) // "none")) as $r
+    | ([(.prompt // "") | scan("`([^`\n]+)`") | .[0]] + [(.prompt // "") | scan("(?<![A-Za-z0-9._~-])(/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+)") | .[0]])
+    | unique[] | [$t, $r, .] | @tsv' "$file" 2>/dev/null \
+  | awk -F'\t' 'length($3) >= 8 && $3 !~ /\/(private\/)?tmp\// && $3 !~ /^[A-Z][A-Z0-9]+-[0-9]+$/ && !seen[$1 FS $2 FS $3]++ { c[$1 FS $3]++ }
+      END { for (k in c) if (c[k] > 1) print k }' \
+  | sort | while IFS=$'\t' read -r role tok; do
+      grep -qF -- "$tok" "$cwd/.claude/agents/$role.md" 2>/dev/null || printf '%s\t%s\n' "$role" "$tok"
+    done \
+  | awk -F'\t' '{ n[$1]++; if (n[$1] <= 6) l[$1] = l[$1] (l[$1] ? ", " : "") $2; else if (n[$1] == 7) l[$1] = l[$1] ", …" }
+      END { for (r in l) printf "  repeated in briefs to %s across requests (move to its role file): %s\n", r, l[r] }'
+}
+
+audit() {
+  local file=$1 cwd roles spawns sends
+  cwd=$(jq -rn 'first(inputs | select(.cwd) | .cwd) // ""' "$file" 2>/dev/null || true)
+  roles=$(for f in "$cwd"/.claude/agents/*.md; do [[ -f $f ]] && basename "$f" .md; done 2>/dev/null | paste -sd, - || true)
+  spawns=$(jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use" and .name=="Agent") | .input | [(.subagent_type // "general-purpose"), (.name // ""), (.description // "")] | @tsv' "$file" 2>/dev/null)
+  sends=$(jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use" and .name=="SendMessage") | .input.to // empty' "$file" 2>/dev/null)
+
+  echo "session: $file"
+  echo "cwd:     ${cwd:-?}"
+  echo "roles:   ${roles:-none}"
+  if [[ -z $spawns ]]; then echo "spawns:  0"; echo; return; fi
+  echo "spawns:  $(wc -l <<< "$spawns" | tr -d ' ')"
+  awk -F'\t' '{ printf "  %-18s %-22s %s\n", $1, ($2 == "" ? "(unnamed)" : $2), $3 }' <<< "$spawns"
+  echo "findings:"
+  ROLES=$roles SENDS=$sends awk -F'\t' '
+    BEGIN {
+      n = split(ENVIRON["ROLES"], r, ","); for (i = 1; i <= n; i++) isrole[r[i]] = 1
+      ns = split(ENVIRON["SENDS"], s, "\n")
+    }
+    {
+      type = $1; name = $2
+      if (n > 0 && !isrole[type] && (type == "general-purpose")) { gp++; if (gp <= 8) gpn = gpn (gpn ? ", " : "") (name ? name : "(unnamed)"); else if (gp == 9) gpn = gpn ", …" }
+      if (name == "") { unnamed++; next }
+      spawned[name]++
+      # a name is the role, or the role plus a topic: builder, builder-2, builder-nat-keepalive
+      if (name != type && index(name, type "-") != 1) { nj++; if (nj <= 8) job = job (job ? ", " : "") name; else if (nj == 9) job = job ", …" }
+    }
+    END {
+      if (gp) printf "  not a project role: general-purpose ×%d (%s)\n", gp, gpn
+      if (job) printf "  job-style name ×%d: %s\n", nj, job
+      for (k in spawned) if (spawned[k] > 1) printf "  name reused: %s (%d spawns)\n", k, spawned[k]
+      if (unnamed) printf "  unnamed: %d (cannot be messaged by name)\n", unnamed
+      for (i = 1; i <= ns; i++) if (s[i] != "" && (s[i] in spawned || s[i] ~ /^a[0-9a-f]{16}$/)) fu++
+      printf "  follow-ups to existing workers: %d\n", fu + 0
+    }' <<< "$spawns"
+  repeated_background "$file" "$cwd"
+  echo
+}
+
+for f in "$@"; do audit "$f"; done

@@ -1,0 +1,19 @@
+{
+  "name": "siliconcat-ai-plugins",
+  "owner": {
+    "name": "Silicon Cat Technologies"
+  },
+  "metadata": {
+    "description": "Claude Code and Codex plugins by Silicon Cat Technologies",
+    "version": "0.1.0",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "director",
+      "source": "./plugins/director",
+      "description": "A director for Claude Code and Codex: it splits each request into jobs for your project's roles, runs them as subagents, keeps one file per request, and shows what it is waiting on from you.",
+      "version": "0.1.0"
+    }
+  ]
+}

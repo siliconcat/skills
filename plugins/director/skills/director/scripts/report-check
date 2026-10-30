@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Stop hook for director workers (a role file's Stop hook runs as SubagentStop): the final reply
+# must be at most 15 lines and name a report file that exists. Missing input lets the worker stop.
+set -euo pipefail
+
+in=$(cat)
+[[ $(jq -r '.stop_hook_active // false' <<< "$in") == true ]] && exit 0
+msg=$(jq -r '.last_assistant_message // ""' <<< "$in")
+[[ -n $msg ]] || exit 0
+cwd=$(jq -r '.cwd // empty' <<< "$in"); cd "${cwd:-.}" 2>/dev/null || true
+
+block() { jq -n --arg r "$1" '{decision: "block", reason: $r}'; exit 0; }
+
+# A reply often names source files too: a file under director/reports/ wins, else the first existing one.
+found="" report=""
+while IFS= read -r p; do
+  p=${p/#\~/$HOME}
+  [[ -f $p ]] || continue
+  [[ -z $found ]] && found=$p
+  [[ $p == *director/reports/* ]] && { report=$p; break; }
+done < <(grep -oE '(~|\.{0,2})?/?[A-Za-z0-9._@-]+(/[A-Za-z0-9._@-]+)+\.[A-Za-z0-9]+' <<< "$msg" || true)
+[[ -n $found ]] || block "Write your full report to a file (the path your brief names, or your scratchpad), then reply with its path and a summary of at most 15 lines."
+
+n=$(printf '%s\n' "$msg" | wc -l | tr -d ' ')
+if [[ $n -gt 15 ]]; then
+  [[ -n $report ]] && block "Your reply is $n lines. The full report is in $report; reply with its path and a summary of at most 15 lines."
+  block "Your reply is $n lines. Put the details in the report file your brief names (director/reports/R-NNNN-<you>.md, or your scratchpad), then reply with its path and a summary of at most 15 lines."
+fi
+exit 0

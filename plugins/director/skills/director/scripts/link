@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Point ~/.local/share/director/bin at the scripts beside this file: role files, hooks and the band
+# call that fixed path, so the installed copy can move (plugin upgrades) without breaking them.
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+dest=${DIRECTOR_BIN:-$HOME/.local/share/director/bin}
+
+if [[ -e $dest && ! -L $dest ]]; then
+  echo "link: $dest exists and is not a link; leaving it alone" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "$dest")"
+[[ $(readlink "$dest" 2>/dev/null || true) == "$here" ]] || ln -sfn "$here" "$dest"
+echo "director scripts: $dest -> $here"

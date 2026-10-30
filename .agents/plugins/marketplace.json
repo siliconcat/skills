@@ -1,0 +1,17 @@
+{
+  "name": "siliconcat-ai-plugins",
+  "plugins": [
+    {
+      "name": "director",
+      "source": {
+        "source": "local",
+        "path": "./plugins/director"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

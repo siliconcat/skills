@@ -1,0 +1,434 @@
+#!/usr/bin/env bash
+# Director request store: one markdown file per request, open/ and closed/.
+# shortcut: the lock covers one machine; two machines sharing the store would need real sync.
+set -euo pipefail
+
+STATUSES="open in-flight blocked done dropped"
+
+usage() {
+  cat <<'EOF'
+req init                          create director/requests/{open,closed}, exclude director files from git
+req new [--mission NAME]          exact request text on stdin; prints the new id
+req add ID                        addendum text on stdin, appended as said
+req status ID STATUS [--force] [OUTCOME]
+                                  open|in-flight|blocked|done|dropped; done/dropped move to closed/,
+                                  refused while a worker is not retired unless --force
+req worker ID [--retire] NAME...  record the workers a request used, or mark them shut down
+req receipt ID URL...             record links to PRs, runs, tickets
+req ask ID TEXT | ID --done        record what you need from the user, or that they answered
+req asks                          open asks of open requests: id, since (UTC), text, tab-separated
+req rework ID WORKER WHY          record a round of rework: a failed verify, a user correction, a reopen
+req stats                         closed requests without rework, and rework rounds by role
+req prune                         remove worktrees (own repo agent-*, repos in director/repos under this project's scratchpad) that are clean, pushed or squash-merged, untouched for an hour
+req open                          one line per open request
+req show ID                       print a request
+req check [ID...]                 live state of the receipts of open (or given) requests
+req lint                          ledger size, role model, tools and emoji, git exclusion, stale requests
+EOF
+}
+
+die() { echo "req: $*" >&2; exit 1; }
+
+find_root() {
+  local d=$PWD
+  while [[ $d != / ]]; do
+    [[ -f $d/DIRECTOR.md || -d $d/director/requests ]] && { echo "$d"; return; }
+    d=$(dirname "$d")
+  done
+  git rev-parse --show-toplevel 2>/dev/null || echo "$PWD"
+}
+
+ROOT=${DIRECTOR_ROOT:-$(find_root)}
+REQ=$ROOT/director/requests
+TODAY=$(date +%F)
+
+in_git() { git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; }
+
+lock() {
+  local i
+  for i in $(seq 1 50); do
+    mkdir "$REQ/.lock" 2>/dev/null && { trap 'rmdir "$REQ/.lock" 2>/dev/null || true' EXIT; return; }
+    sleep 0.1
+  done
+  die "store locked ($REQ/.lock); remove it if no other req is running"
+}
+
+path_of() {
+  local id=$1 f
+  [[ $id =~ ^R-[0-9]{4}$ ]] || die "bad id '$id' (expected R-NNNN)"
+  for f in "$REQ/open/$id.md" "$REQ/closed/$id.md"; do
+    [[ -f $f ]] && { echo "$f"; return; }
+  done
+  die "$id not found under $REQ"
+}
+
+read_stdin() {
+  [[ -t 0 ]] && die "pass the text on stdin"
+  local text
+  text=$(cat)
+  [[ -n ${text//[[:space:]]/} ]] || die "empty text on stdin"
+  printf '%s' "$text"
+}
+
+# insert TEXT as the last lines of SECTION (before the next "## " heading)
+append_to_section() {
+  local file=$1 section=$2
+  SECTION="## $section" TEXT="$3" awk '
+    function flush() { if (insec) { sub(/\n+$/, "", buf); printf "%s", buf; if (buf != "") print ""; print ENVIRON["TEXT"]; print ""; insec=0; buf="" } }
+    $0 == ENVIRON["SECTION"] { print; insec=1; buf=""; next }
+    insec && /^## / { flush() }
+    insec { buf = buf $0 "\n"; next }
+    { print }
+    END { flush() }
+  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+set_front() {
+  local file=$1 key=$2 val=$3
+  KEY=$key VAL=$val perl -pi -e 'if (/^---$/) { $n++; $_ = "$ENV{KEY}: $ENV{VAL}\n$_" if $n == 2 && !$seen } elsif ($n == 1 && /^\Q$ENV{KEY}\E:/) { $_ = "$ENV{KEY}: $ENV{VAL}\n"; $seen = 1 }' "$file"
+}
+
+get_front() { awk -v k="$2" '/^---$/{n++; next} n==1 && index($0, k": ")==1 {print substr($0, length(k)+3); exit}' "$1"; }
+
+cmd_init() {
+  mkdir -p "$REQ/open" "$REQ/closed"
+  in_git || { echo "initialised $REQ (not a git repo)"; return; }
+  local ex line
+  ex=$(git -C "$ROOT" rev-parse --git-path info/exclude)
+  [[ $ex = /* ]] || ex=$ROOT/$ex
+  mkdir -p "$(dirname "$ex")"; touch "$ex"
+  { echo /DIRECTOR.md; echo /director/
+    git -C "$ROOT" ls-files --others --exclude-standard -- .claude/agents .codex/agents .codex/hooks.json | sed 's#^#/#'
+  } | while IFS= read -r line; do
+    grep -qxF "$line" "$ex" || { echo "$line" >> "$ex"; echo "excluded $line"; }
+  done
+  echo "initialised $REQ"
+}
+
+cmd_new() {
+  local mission=none
+  [[ ${1:-} == --mission ]] && { mission=${2:?--mission needs a name}; shift 2; }
+  local text; text=$(read_stdin)
+  [[ -d $REQ/open ]] || die "no store at $REQ; run 'req init' first"
+  lock
+  local last n id
+  last=$(find "$REQ/open" "$REQ/closed" -name 'R-[0-9][0-9][0-9][0-9].md' 2>/dev/null | sed 's#.*/R-##; s#\.md$##' | sort -n | tail -1)
+  n=$((10#${last:-0} + 1))
+  id=$(printf 'R-%04d' "$n")
+  cat > "$REQ/open/$id.md" <<EOF
+---
+id: $id
+date: $TODAY
+status: open
+mission: $mission
+workers: []
+retired: []
+---
+
+## Request
+$text
+
+## Addenda
+
+## Outcome
+
+## Receipts
+EOF
+  echo "$id"
+}
+
+cmd_add() {
+  local f; f=$(path_of "${1:?id}")
+  local text; text=$(read_stdin)
+  lock
+  append_to_section "$f" Addenda "- $TODAY: $(printf '%s' "$text" | sed '2,$s/^/  /')"
+  echo "${1} addendum recorded"
+}
+
+cmd_status() {
+  local id=${1:?id} st=${2:?status} force=0
+  [[ ${3:-} == --force ]] && { force=1; shift; }
+  local outcome=${3:-}
+  [[ " $STATUSES " == *" $st "* ]] || die "status must be one of: $STATUSES"
+  local f; f=$(path_of "$id")
+  if [[ ($st == done || $st == dropped) && $force == 0 ]]; then
+    local live; live=$(live_workers "$f")
+    [[ -z $live ]] || die "$id still has live workers: $live. Shut them down, then: req worker $id --retire $live (or --force)"
+  fi
+  lock
+  set_front "$f" status "$st"
+  [[ -n $outcome ]] && append_to_section "$f" Outcome "$TODAY: $outcome"
+  [[ $st == done || $st == dropped ]] && perl -pi -e 's/^- \[ \] (?=\d{4}-\d\d-\d\dT)/- [x] /' "$f"
+  local dest=open
+  [[ $st == done || $st == dropped ]] && dest=closed
+  [[ $f == "$REQ/$dest/$id.md" ]] || mv "$f" "$REQ/$dest/$id.md"
+  echo "$id $st ($dest)"
+}
+
+list_front() { get_front "$1" "$2" | tr -d '[] '; }
+
+# workers of a request that are not retired, space-separated
+live_workers() {
+  local ret w out=""
+  ret=",$(list_front "$1" retired),"
+  for w in $(list_front "$1" workers | tr , ' '); do [[ $ret == *",$w,"* ]] || out+="${out:+ }$w"; done
+  echo "$out"
+}
+
+cmd_worker() {
+  local id=${1:?id}; shift
+  local key=workers
+  [[ ${1:-} == --retire ]] && { key=retired; shift; }
+  [[ $# -gt 0 ]] || die "name at least one worker"
+  local f; f=$(path_of "$id")
+  local w g
+  if [[ $key == retired ]]; then
+    for w in "$@"; do [[ ",$(list_front "$f" workers)," == *",$w,"* ]] || die "$w is not a worker of $id"; done
+  fi
+  lock
+  local cur; cur=$(list_front "$f" $key)
+  for w in "$@"; do [[ ",$cur," == *",$w,"* ]] || cur=${cur:+$cur,}$w; done
+  set_front "$f" $key "[${cur//,/, }]"
+  echo "$id $key: [${cur//,/, }]"
+  [[ $key == retired ]] || return 0
+  for g in "$REQ"/open/R-*.md; do
+    [[ -f $g && $g != "$f" ]] || continue
+    for w in "$@"; do [[ " $(live_workers "$g") " == *" $w "* ]] && echo "note: $w is still live on $(basename "$g" .md); keep it running"; done
+  done
+  return 0
+}
+
+cmd_receipt() {
+  local id=${1:?id}; shift
+  [[ $# -gt 0 ]] || die "give at least one url"
+  local f; f=$(path_of "$id")
+  lock
+  local u
+  for u in "$@"; do grep -qxF -- "- $u" "$f" || append_to_section "$f" Receipts "- $u"; done
+  echo "$id receipts recorded"
+}
+
+# what the director waits on from the user, as "- [ ] <UTC time>: <text>" lines under "## Asks"
+cmd_ask() {
+  local id=${1:?id} text=${2:?what you need from the user, or --done}
+  local f; f=$(path_of "$id")
+  lock
+  if [[ $text == --done ]]; then
+    perl -pi -e 's/^- \[ \] (?=\d{4}-\d\d-\d\dT)/- [x] /' "$f"
+    echo "$id asks answered"
+    return
+  fi
+  grep -qx '## Asks' "$f" || printf '\n## Asks\n' >> "$f"
+  append_to_section "$f" Asks "- [ ] $(date -u +%Y-%m-%dT%H:%MZ): ${text//$'\n'/ }"
+  echo "$id ask recorded"
+}
+
+# open asks of open requests, one per line: id, since (UTC), text, tab-separated
+cmd_asks() {
+  local f
+  for f in "$REQ"/open/R-*.md; do
+    [[ -f $f ]] || continue
+    sed -n 's/^- \[ \] \([0-9TZ:-]*\): /\1\t/p' "$f" | sed "s/^/$(basename "$f" .md)\t/"
+  done
+}
+
+cmd_rework() {
+  local id=${1:?id} who=${2:?worker} why=${3:?why}
+  local f; f=$(path_of "$id")
+  lock
+  append_to_section "$f" Outcome "$TODAY: rework ($who): $why"
+  echo "$id rework recorded for $who"
+}
+
+# closed requests: how many closed without rework, and rework rounds by role (the role file a worker name starts with)
+cmd_stats() {
+  local files=() f
+  for f in "$REQ"/closed/R-*.md; do [[ -f $f ]] && files+=("$f"); done
+  [[ ${#files[@]} -gt 0 ]] || { echo "no closed requests"; return; }
+  local roles=""; for f in "$ROOT"/.claude/agents/*.md; do [[ -f $f ]] && roles+="$(basename "$f" .md) "; done
+  ROLES=$roles awk '
+    BEGIN { n_r = split(ENVIRON["ROLES"], rl, " "); for (i = 1; i <= n_r; i++) isrole[rl[i]] = 1 }
+    FNR == 1 { n++ }
+    /^[0-9-]+: rework \(/ { if (!(FILENAME in hit)) { hit[FILENAME] = 1; withrw++ }
+      r = $0; sub(/^[^(]*\(/, "", r); sub(/\).*/, "", r); role = ""; for (k in isrole) if ((r == k || index(r, k "-") == 1) && length(k) > length(role)) role = k
+      if (role == "") { role = r; sub(/-[0-9]+$/, "", role) }
+      byrole[role]++; total++ }
+    END {
+      printf "closed: %d, without rework: %d, rework rounds: %d\n", n, n - withrw, total
+      for (r in byrole) printf "  %-18s %d\n", r, byrole[r]
+    }' "${files[@]}"
+}
+
+summary_line() {
+  local f=$1 first
+  first=$(awk '/^## Request$/{getline; print; exit}' "$f" | cut -c1-80)
+  printf '%s  %-9s  %s  %-14s  %s\n' "$(get_front "$f" id)" "$(get_front "$f" status)" "$(get_front "$f" date)" "$(get_front "$f" mission)" "$first"
+}
+
+# pushed = on a remote branch; or landed by squash: the files it changed match origin's default branch, or its whole
+# diff is the diff of one commit there (patch-id). Any error means not pushed.
+wt_pushed() {
+  local wt=$1 def base f pid c files=()
+  [[ -n $(git -C "$wt" branch -r --contains HEAD 2>/dev/null) ]] && return 0
+  def=$(git -C "$wt" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)
+  base=$(git -C "$wt" merge-base HEAD "$def" 2>/dev/null) || return 1
+  while IFS= read -r -d '' f; do files+=(":(literal)$f"); done \
+    < <(git -C "$wt" diff --no-renames --name-only -z "$base" HEAD 2>/dev/null)
+  if [[ ${#files[@]} -gt 0 ]] && git -C "$wt" diff --quiet HEAD "$def" -- "${files[@]}" 2>/dev/null; then return 0; fi
+  pid=$(git -C "$wt" diff --no-renames "$base" HEAD 2>/dev/null | git patch-id --verbatim 2>/dev/null | cut -d' ' -f1) || return 1
+  [[ -n $pid ]] || return 1
+  while IFS= read -r c; do
+    [[ $(git -C "$wt" diff --no-renames "$c^" "$c" 2>/dev/null | git patch-id --verbatim 2>/dev/null | cut -d' ' -f1) == "$pid" ]] && return 0
+  done < <(git -C "$wt" rev-list --no-merges --max-count=1000 "$base..$def" 2>/dev/null)
+  return 1
+}
+
+# prune_repo REPO FILTER-GLOB DELETE-BRANCHES: remove clean, pushed, idle worktrees of REPO whose path matches the glob
+prune_repo() {
+  local repo=$1 pat=$2 delbr=$3 wt br onremote
+  while IFS= read -r wt; do
+    # shellcheck disable=SC2053
+    [[ $wt == $pat && -d $wt ]] || continue
+    if [[ -n $(git -C "$wt" status --porcelain 2>/dev/null) ]]; then echo "kept $wt: uncommitted changes"; kept=$((kept+1)); continue; fi
+    if ! wt_pushed "$wt"; then echo "kept $wt: HEAD not pushed"; kept=$((kept+1)); continue; fi
+    if [[ -n $(find "$wt" -path "$wt/.git" -prune -o -mmin -60 -print -quit 2>/dev/null) ]]; then echo "kept $wt: changed in the last hour"; kept=$((kept+1)); continue; fi
+    br=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    onremote=$(git -C "$wt" branch -r --contains HEAD 2>/dev/null)
+    git -C "$repo" worktree remove "$wt" && removed=$((removed+1))
+    [[ $delbr == 1 && -n $onremote && $br == worktree-agent-* ]] && git -C "$repo" branch -D "$br" >/dev/null
+  done < <(git -C "$repo" worktree list --porcelain | sed -n 's/^worktree //p')
+  return 0
+}
+
+# remove worktrees that can go without losing anything: clean, pushed, untouched for an hour.
+# Ignored files in a removed worktree go with it. Own repo: .claude/worktrees/agent-*. Repos in director/repos: only worktrees under this project's scratchpad slug.
+cmd_prune() {
+  local kept=0 removed=0 repo slug="/${ROOT//\//-}/" any=0
+  if in_git; then any=1; prune_repo "$ROOT" '*/.claude/worktrees/agent-*' 1; fi
+  if [[ -f $ROOT/director/repos ]]; then
+    any=1
+    while IFS= read -r repo || [[ -n $repo ]]; do
+      [[ $repo == '#'* || -z ${repo//[[:space:]]/} ]] && continue
+      [[ -d $repo ]] || { echo "skipped $repo: not a directory"; continue; }
+      prune_repo "$repo" "*$slug*" 0
+    done < "$ROOT/director/repos"
+  fi
+  [[ $any == 1 ]] || { echo "not a git repo and no director/repos"; return; }
+  echo "pruned $removed agent worktrees, kept $kept"
+}
+
+cmd_open() {
+  local f found=0
+  for f in "$REQ"/open/R-*.md; do [[ -f $f ]] || continue; summary_line "$f"; found=1; done
+  [[ $found == 1 ]] || echo "no open requests"
+}
+
+cmd_show() { cat "$(path_of "${1:?id}")"; }
+
+receipt_state() {
+  local u=$1 out
+  if [[ $u =~ github\.com/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
+    out=$(gh pr view "$u" --json state,mergedAt,title --jq '"PR \(.state | ascii_downcase)\(if .mergedAt then " " + (.mergedAt[:10]) else "" end): \(.title[:60])"' 2>&1) || out="PR lookup failed: ${out%%$'\n'*}"
+  elif [[ $u =~ github\.com/([^/]+/[^/]+)/actions/runs/([0-9]+) ]]; then
+    out=$(gh run view "${BASH_REMATCH[2]}" -R "${BASH_REMATCH[1]}" --json status,conclusion,workflowName --jq '"run \(.workflowName): \(.status) \(.conclusion // "")"' 2>&1) || out="run lookup failed: ${out%%$'\n'*}"
+  elif [[ $u =~ (https://[^/]+\.atlassian\.net)/browse/([A-Z][A-Z0-9]+-[0-9]+) ]]; then
+    out=$(curl -s --netrc "${BASH_REMATCH[1]}/rest/api/3/issue/${BASH_REMATCH[2]}?fields=status" | jq -r '"Jira " + (.fields.status.name // ("lookup failed: " + ((.errorMessages // ["no status"]) | join("; "))))' 2>&1) || out="Jira lookup failed"
+  else
+    out="not checked"
+  fi
+  echo "$out"
+}
+
+cmd_check() {
+  local files=() id f u
+  if [[ $# -gt 0 ]]; then for id in "$@"; do files+=("$(path_of "$id")"); done
+  else for f in "$REQ"/open/R-*.md; do [[ -f $f ]] && files+=("$f"); done; fi
+  [[ ${#files[@]} -gt 0 ]] || { echo "no open requests"; return; }
+  for f in "${files[@]}"; do
+    summary_line "$f"
+    local urls; urls=$(awk '/^## Receipts$/{r=1; next} /^## /{r=0} r && /^- /{print substr($0, 3)}' "$f")
+    [[ -n $urls ]] || { echo "    (no receipts)"; continue; }
+    while IFS= read -r u; do printf '    %s\n      → %s\n' "$u" "$(receipt_state "$u")"; done <<< "$urls"
+  done
+}
+
+cmd_lint() {
+  local warn=0
+  w() { echo "warn: $*"; warn=1; }
+  local ledger=$ROOT/DIRECTOR.md
+  if [[ -f $ledger ]]; then
+    local n; n=$(wc -l < "$ledger" | tr -d ' ')
+    [[ $n -le 100 ]] || w "DIRECTOR.md is $n lines (budget 100): prune or migrate"
+    grep -qE '^## (In flight|Findings|Backlog)' "$ledger" && w "DIRECTOR.md has old-style ledger sections: migrate"
+  else
+    w "no DIRECTOR.md at $ROOT"
+  fi
+  local f e seen=""
+  for f in "$ROOT"/.claude/agents/*.md; do
+    [[ -f $f ]] || continue
+    awk '/^---$/{n++; next} n==1 && /^model:[[:space:]]*[^[:space:]]/{found=1} END{exit !found}' "$f" \
+      || w "$(basename "$f") has no model: and runs on the director's model"
+    local tools; tools=$(awk '/^---$/{n++; next} n==1 && /^tools:/{print; exit}' "$f")
+    if [[ -z $tools ]]; then w "$(basename "$f") has no tools: line, so it inherits every tool including Agent"
+    elif [[ $tools =~ (^|[^A-Za-z])Agent([^A-Za-z]|$) ]]; then echo "note: $(basename "$f") can spawn subagents (Agent in tools): fine only for a manager or department director"; fi
+    # parts of the role template in bootstrap.md that a role file written earlier may lack
+    awk '/^---$/{n++; next} n==1 && /^maxTurns:[[:space:]]*[0-9]/{found=1} END{exit !found}' "$f" \
+      || w "$(basename "$f") has no maxTurns:, so a stuck worker never stops on its own"
+    [[ -n $tools && $tools != *mcp__savvy-progress__step* ]] && echo "note: $(basename "$f") lacks mcp__savvy-progress__step in tools:, so its workers show no progress"
+    grep -q 'report-check' "$f" || echo "note: $(basename "$f") has no report-check Stop hook: fine only for a role that writes no report"
+    grep -q '^- End the report with "Next time:"' "$f" || echo "note: $(basename "$f") has no \"Next time:\" rule"
+    e=$(sed -n 's/^Emoji:[[:space:]]*//p' "$f" | head -1)
+    if [[ -z $e ]]; then w "$(basename "$f") has no Emoji: line"
+    elif [[ $e == 🎬 ]]; then w "$(basename "$f") uses 🎬, which is the director's"
+    elif [[ $'\n'$seen == *$'\n'"$e "* ]]; then w "$(basename "$f") shares $e with $(printf '%s' "$seen" | grep -F "$e " | head -1 | cut -d' ' -f2)"
+    else seen+="$e $(basename "$f")"$'\n'; fi
+  done
+  if in_git; then
+    local p
+    for p in DIRECTOR.md director; do
+      [[ -e $ROOT/$p ]] || continue
+      git -C "$ROOT" ls-files --error-unmatch "$p" >/dev/null 2>&1 && w "$p is committed to git"
+      git -C "$ROOT" check-ignore -q "$p" || w "$p is not excluded from git: run 'req init'"
+    done
+    while IFS= read -r p; do [[ -n $p ]] && w "$p is untracked and not excluded: run 'req init' or commit it via a PR"; done \
+      < <(git -C "$ROOT" ls-files --others --exclude-standard -- .claude/agents .codex/agents .codex/hooks.json)
+  fi
+  [[ -d $REQ/open ]] && while IFS= read -r f; do
+    [[ -n $f ]] && w "$(basename "$f" .md) untouched for over 7 days"
+  done < <(find "$REQ/open" -name 'R-*.md' -mtime +7)
+  local day; day=$(date -u -v-1d +%Y-%m-%dT%H:%MZ 2>/dev/null || date -u -d '1 day ago' +%Y-%m-%dT%H:%MZ)
+  while IFS=$'\t' read -r f since text; do
+    [[ -n $f && $since < $day ]] && w "$f has waited on the user since $since: $text"
+  done < <(cmd_asks)
+  local live
+  for f in "$REQ"/open/R-*.md "$REQ"/closed/R-*.md; do
+    [[ -f $f ]] || continue
+    live=$(live_workers "$f"); [[ -n $live ]] || continue
+    # closed requests from before retirement was recorded have no retired: line; their workers are long gone
+    if [[ $f == */closed/* ]]; then grep -q '^retired:' "$f" && w "$(basename "$f" .md) is closed with live workers: $live"
+    elif [[ -n $(find "$f" -mmin +1440) ]]; then w "$(basename "$f" .md) untouched for over a day with live workers: $live (retire the ones that ended with their session)"; fi
+  done
+  [[ $warn == 0 ]] && echo "ok"
+  return $warn
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+  init) cmd_init ;;
+  new) cmd_new "$@" ;;
+  add) cmd_add "$@" ;;
+  status) cmd_status "$@" ;;
+  worker) cmd_worker "$@" ;;
+  receipt) cmd_receipt "$@" ;;
+  ask) cmd_ask "$@" ;;
+  asks) cmd_asks ;;
+  rework) cmd_rework "$@" ;;
+  stats) cmd_stats ;;
+  prune) cmd_prune ;;
+  open) cmd_open ;;
+  show) cmd_show "$@" ;;
+  check) cmd_check "$@" ;;
+  lint) cmd_lint ;;
+  ""|-h|--help|help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac
