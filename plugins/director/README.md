@@ -2,7 +2,22 @@
 
 A 🎬 director for Claude Code and Codex. It splits each request into jobs for your project's roles, runs them as subagents with the model and effort each job needs, keeps one file per request, and shows what it is waiting on from you.
 
-Install it from the [Silicon Cat AI plugins](../../README.md#install) marketplace.
+## Install
+
+Claude Code:
+
+```
+/plugin install director --marketplace siliconcat/ai-plugins
+```
+
+Codex:
+
+```
+codex plugin marketplace add siliconcat/ai-plugins
+codex plugin add director@siliconcat-ai-plugins
+```
+
+Start a new session after installing.
 
 ## Use
 
