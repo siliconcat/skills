@@ -13,17 +13,17 @@ The plugin also brings, in Claude Code, the director's band: a row above the pro
 Claude Code:
 
 ```
-/plugin install siliconcat --marketplace siliconcat/ai-plugins
+/plugin install siliconcat --marketplace siliconcat/skills
 ```
 
 Codex:
 
 ```
-codex plugin marketplace add siliconcat/ai-plugins
-codex plugin add siliconcat@siliconcat-ai-plugins
+codex plugin marketplace add siliconcat/skills
+codex plugin add siliconcat@siliconcat
 ```
 
-Or one skill alone, without the band, into any agent [skills.sh](https://skills.sh) supports: `npx skills@latest add siliconcat/ai-plugins --skill <name>`. Pick one route per agent: both would give you every skill twice.
+Or one skill alone, without the band, into any agent [skills.sh](https://skills.sh) supports: `npx skills@latest add siliconcat/skills --skill <name>`. Pick one route per agent: both would give you every skill twice.
 
 Start a new session after installing.
 

@@ -7,15 +7,15 @@ A 🎬 director for Claude Code and Codex. It splits each request into jobs for 
 It comes with the `siliconcat` plugin, which also brings the band:
 
 ```
-/plugin install siliconcat --marketplace siliconcat/ai-plugins     # Claude Code
-codex plugin marketplace add siliconcat/ai-plugins                 # Codex
-codex plugin add siliconcat@siliconcat-ai-plugins
+/plugin install siliconcat --marketplace siliconcat/skills     # Claude Code
+codex plugin marketplace add siliconcat/skills                 # Codex
+codex plugin add siliconcat@siliconcat
 ```
 
 Or the skill alone, without the band, into any agent [skills.sh](https://skills.sh) supports:
 
 ```
-npx skills@latest add siliconcat/ai-plugins --skill director
+npx skills@latest add siliconcat/skills --skill director
 ```
 
 Start a new session after installing.

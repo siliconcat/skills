@@ -1,4 +1,4 @@
-# Silicon Cat AI plugins
+# Silicon Cat skills
 
 Skills for [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex) and other agents, by Silicon Cat Technologies. MIT licensed.
 
@@ -11,15 +11,15 @@ Skills for [Claude Code](https://claude.com/claude-code), [Codex](https://develo
 All the skills, as the [`siliconcat` plugin](plugins/siliconcat/README.md) (they show as `siliconcat:<skill>`, and the plugin adds the director's band in Claude Code):
 
 ```
-/plugin install siliconcat --marketplace siliconcat/ai-plugins     # Claude Code
-codex plugin marketplace add siliconcat/ai-plugins                 # Codex
-codex plugin add siliconcat@siliconcat-ai-plugins
+/plugin install siliconcat --marketplace siliconcat/skills     # Claude Code
+codex plugin marketplace add siliconcat/skills                 # Codex
+codex plugin add siliconcat@siliconcat
 ```
 
 Or the skills you pick, through [skills.sh](https://skills.sh), into any agent it supports:
 
 ```
-npx skills@latest add siliconcat/ai-plugins
+npx skills@latest add siliconcat/skills
 ```
 
 Pick one route per agent: both would give you every skill twice. Start a new session after installing.
