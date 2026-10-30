@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { age, parse } from './register'
 
 const BAND = {
-  plugin: 'director',
+  plugin: 'siliconcat',
   component: 'AbovePrompt',
   props: {
     hasSurvey: false,

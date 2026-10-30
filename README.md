@@ -1,29 +1,29 @@
 # Silicon Cat AI plugins
 
-Plugins for [Claude Code](https://claude.com/claude-code) and [Codex](https://developers.openai.com/codex), by Silicon Cat Technologies. MIT licensed.
+Skills for [Claude Code](https://claude.com/claude-code), [Codex](https://developers.openai.com/codex) and other agents, by Silicon Cat Technologies. MIT licensed.
 
-| Plugin | What it does |
+| Skill | What it does |
 | --- | --- |
-| [director](plugins/director) | Turns a session into a 🎬 director: it splits each request into jobs for your project's roles, runs them as subagents with the model and effort each job needs, keeps one file per request, and shows what it is waiting on from you. |
+| [director](plugins/siliconcat/skills/director/README.md) | Turns a session into a 🎬 director: it splits each request into jobs for your project's roles, runs them as subagents with the model and effort each job needs, keeps one file per request, and shows what it is waiting on from you. |
 
 ## Install
 
-Claude Code:
+All the skills, as the [`siliconcat` plugin](plugins/siliconcat/README.md) (they show as `siliconcat:<skill>`, and the plugin adds the director's band in Claude Code):
 
 ```
-/plugin marketplace add siliconcat/ai-plugins
-/plugin install <plugin>@siliconcat-ai-plugins
+/plugin install siliconcat --marketplace siliconcat/ai-plugins     # Claude Code
+codex plugin marketplace add siliconcat/ai-plugins                 # Codex
+codex plugin add siliconcat@siliconcat-ai-plugins
 ```
 
-Codex:
+Or the skills you pick, through [skills.sh](https://skills.sh), into any agent it supports:
 
 ```
-codex plugin marketplace add siliconcat/ai-plugins
-codex plugin add <plugin>@siliconcat-ai-plugins
+npx skills@latest add siliconcat/ai-plugins
 ```
 
-Start a new session after installing. Each plugin's README says how to use it.
+Pick one route per agent: both would give you every skill twice. Start a new session after installing.
 
 ## Develop
 
-Each plugin lives in `plugins/<name>/`, with `.claude-plugin/plugin.json` for Claude Code and `.codex-plugin/plugin.json` for Codex, and is listed in both marketplace files: `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. `claude plugin validate .` checks the marketplace.
+The plugin lives in `plugins/siliconcat/`, with `.claude-plugin/plugin.json` for Claude Code and `.codex-plugin/plugin.json` for Codex, listed in both marketplace files: `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Each skill is a folder in `plugins/siliconcat/skills/`. `claude plugin validate .` checks the marketplace.

@@ -2,10 +2,10 @@
   "name": "siliconcat-ai-plugins",
   "plugins": [
     {
-      "name": "director",
+      "name": "siliconcat",
       "source": {
         "source": "local",
-        "path": "./plugins/director"
+        "path": "./plugins/siliconcat"
       },
       "policy": {
         "installation": "AVAILABLE",

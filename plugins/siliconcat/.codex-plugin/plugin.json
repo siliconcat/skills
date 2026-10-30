@@ -1,0 +1,18 @@
+{
+  "name": "siliconcat",
+  "version": "0.1.0",
+  "description": "Silicon Cat Technologies' skills for Claude Code and Codex: director, which runs each request through your project's roles as subagents, with a band that shows what it is waiting on from you.",
+  "author": {
+    "name": "Silicon Cat Technologies"
+  },
+  "license": "MIT",
+  "skills": "./skills/",
+  "hooks": "./codex-hooks.json",
+  "interface": {
+    "displayName": "Silicon Cat",
+    "shortDescription": "Silicon Cat skills: director and more",
+    "developerName": "Silicon Cat Technologies",
+    "category": "Developer Tools",
+    "capabilities": []
+  }
+}

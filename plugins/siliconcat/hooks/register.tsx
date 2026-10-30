@@ -3,8 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Ask } from '../types'
 
-const asks = atom({ plugin: 'director', key: 'asks' } as const, [] as Ask[])
-const checkedAt = atom({ plugin: 'director', key: 'checkedAt' } as const, 0)
+const asks = atom({ plugin: 'siliconcat', key: 'asks' } as const, [] as Ask[])
+const checkedAt = atom({ plugin: 'siliconcat', key: 'checkedAt' } as const, 0)
 
 // req (linked there by the skill) finds the project's request store from the session's directory and prints nothing outside one.
 const REQ_ASKS = ['bash', '-c', 'exec "$HOME/.local/share/director/bin/req" asks']
