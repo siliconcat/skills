@@ -1,4 +1,4 @@
-export type Ask = { id: string; since: string; text: string }
+export type Ask = { id: string; since: string; text: string; yesNo: boolean }
 
 declare module 'claude-code' {
   interface PluginState {
