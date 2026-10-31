@@ -186,6 +186,24 @@ echo '{"state":"OPEN","assignees":[{"login":"x"}],"labels":[{"name":"needs-info"
 [[ -z $(ic tr-b.jsonl) ]] || fail "issue-check blocked a relabelled issue"
 [[ -z $(echo '{}' | "$HERE/issue-check") ]] || fail "issue-check blocked on missing input"
 
+# skill-check stop hook
+sc() { jq -n --arg t "$1" '{agent_transcript_path: $t, stop_hook_active: ('"${2:-false}"')}' | "$HERE/skill-check" tdd code-review; }
+skill() { jq -nc --arg s "$1" '{type: "assistant", message: {content: [{type: "tool_use", name: "Skill", input: {skill: $s}}]}}'; }
+brief $'Issue: acme/app#126  Job: build' sb
+sc tr-sb.jsonl | grep -q 'tdd, code-review' || fail "skill-check let a build job through with no skills"
+skill mattpocock-skills:tdd >> tr-sb.jsonl
+sc tr-sb.jsonl | grep -q 'not loaded yet: code-review\.' || fail "skill-check named a loaded skill as missing"
+skill code-review >> tr-sb.jsonl
+[[ -z $(sc tr-sb.jsonl) ]] || fail "skill-check blocked a build job that loaded its skills"
+[[ -z $(sc tr-p.jsonl) ]] || fail "skill-check blocked a plan job"
+[[ -z $(sc tr-n.jsonl) ]] || fail "skill-check blocked a brief without a Job line"
+[[ -z $(sc tr-b.jsonl true) ]] || fail "skill-check blocked twice in a row"
+cp tr-p.jsonl tr-pb.jsonl; jq -nc '{type: "user", message: {content: [{type: "text", text: "Your plan is approved.\nJob: **build**"}]}}' >> tr-pb.jsonl
+sc tr-pb.jsonl | grep -q '"block"' || fail "skill-check missed a plan job resumed as a build"
+skill tdd-extra >> tr-pb.jsonl; skill code-review >> tr-pb.jsonl
+sc tr-pb.jsonl | grep -q 'not loaded yet: tdd\.' || fail "skill-check matched a skill by prefix"
+[[ -z $(echo '{}' | "$HERE/skill-check" tdd) ]] || fail "skill-check blocked on missing input"
+
 # director-audit on a synthetic transcript
 cat > s.jsonl <<'EOF'
 {"type":"user","cwd":"CWD","message":{"content":"hi"}}

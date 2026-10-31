@@ -33,7 +33,7 @@ What it keeps in the project, all excluded from git through `.git/info/exclude`:
 
 ## What comes with it
 
-- `req`, the script that keeps the request files (`req help`), `report-check`, a stop hook that holds workers to a short reply plus a report file, and `issue-check`, a stop hook that keeps a build worker from leaving its issue assigned and `ready-for-agent` with no open PR. The director links them at `~/.local/share/director/bin` on each start, so role files and hooks keep working across upgrades.
+- `req`, the script that keeps the request files (`req help`), `report-check`, a stop hook that holds workers to a short reply plus a report file, `issue-check`, a stop hook that keeps a build worker from leaving its issue assigned and `ready-for-agent` with no open PR, and `skill-check`, a stop hook that keeps a build worker from finishing until it has loaded the skills its role names (say, a TDD and a code-review skill). The director links them at `~/.local/share/director/bin` on each start, so role files and hooks keep working across upgrades.
 - With the `siliconcat` plugin in Claude Code, a band above the prompt listing what the director is waiting on from you, with each request and how long it has waited.
 - `director-audit` (Claude Code), which reports how a session spawned and reused its workers.
 
@@ -45,4 +45,4 @@ Needs `bash`, `git`, `jq` and `perl`; `gh` and a `~/.netrc` for Jira let `req ch
 
 ## Develop
 
-From this folder: `scripts/test.sh` tests `req`, `report-check`, `issue-check`, `director-audit` and `link`. The band is tested with the plugin: see its [README](../../README.md).
+From this folder: `scripts/test.sh` tests `req`, `report-check`, `issue-check`, `skill-check`, `director-audit` and `link`. The band is tested with the plugin: see its [README](../../README.md).

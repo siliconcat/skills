@@ -34,7 +34,7 @@ What a Codex role cannot carry, and what stands in for it:
 
 ## The report check
 
-Codex's `SubagentStop` hook passes the same fields as Claude Code's (`last_assistant_message`, `stop_hook_active`, `cwd`), so `report-check` works unchanged; `issue-check` reads the transcript path the same way and can be listed for builder roles in the same way. When you write the roles, add to the project's `.codex/hooks.json`, listing the roles that write a report:
+Codex's `SubagentStop` hook passes the same fields as Claude Code's (`last_assistant_message`, `stop_hook_active`, `cwd`), so `report-check` works unchanged; `issue-check` and `skill-check` read the transcript path the same way and can be listed for builder roles in the same way. When you write the roles, add to the project's `.codex/hooks.json`, listing the roles that write a report:
 
 ```json
 {
