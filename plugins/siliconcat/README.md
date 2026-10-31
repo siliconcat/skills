@@ -6,7 +6,7 @@ Silicon Cat Technologies' skills for Claude Code and Codex, in one plugin. Its s
 | --- | --- |
 | [director](skills/director/README.md) | Turns a session into a 🎬 director: it splits each request into jobs for your project's roles, runs them as subagents, keeps one file per request, and shows what it is waiting on from you. |
 
-The plugin also brings, in Claude Code, the director's band: a row above the prompt listing what the director is waiting on from you. It shows nothing outside a director project.
+The plugin also brings, in Claude Code, the director's band: a row above the prompt listing what the director is waiting on from you. It shows only in the session that loaded the director skill (a resumed one included), so a Yes always reaches the director, never another session open in the same folder.
 
 ## Install
 
