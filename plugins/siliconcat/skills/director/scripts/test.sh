@@ -110,13 +110,19 @@ grep -qE '^  builder +3$' <<< "$out" || fail "stats by role: $out"
 aid=$(echo "asks test - [ ] not an ask" | req new)
 req ask "$aid" "approve merging #96" > /dev/null
 out=$(req asks)
-grep -qE "^$aid	[0-9T:Z-]+	approve merging #96\$" <<< "$out" || fail "asks output: $out"
+grep -qE "^$aid	[0-9T:Z-]+	approve merging #96	open\$" <<< "$out" || fail "asks output: $out"
 perl -pi -e 's/^- \[ \] \d{4}-\S+/- [ ] 2020-01-01T00:00Z:/' "director/requests/open/$aid.md"
 out=$(req lint 2>/dev/null || true)
 grep -q "$aid has waited on the user since 2020-01-01T00:00Z: approve merging #96" <<< "$out" || fail "lint missed an old ask: $out"
 req ask "$aid" --done > /dev/null
 [[ -z $(req asks) ]] || fail "ask still open after --done"
+printf -- '- [ ] 2020-01-01T00:00Z: an old line\n' >> "director/requests/open/$aid.md"
+grep -qE "^$aid	2020-01-01T00:00Z	an old line	open\$" <<< "$(req asks)" || fail "an old ask line does not read as open"
+req ask "$aid" "merge #97?" --yes-no > /dev/null
+out=$(req asks)
+grep -qE "^$aid	[0-9T:Z-]+	merge #97\?	yes-no\$" <<< "$out" || fail "yes-no ask output: $out"
 req ask "$aid" "second ask" > /dev/null
+[[ $(grep -c "	open\$" <<< "$(req asks)") == 2 ]] || fail "a plain ask is not open-ended"
 req status "$aid" dropped "test" > /dev/null
 [[ -z $(req asks) ]] || fail "closing left an ask open"
 grep -q "^asks test - \[ \] not an ask\$" "director/requests/closed/$aid.md" || fail "closing touched request text"

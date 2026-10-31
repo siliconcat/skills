@@ -15,7 +15,10 @@ export function parse(stdout: string): Ask[] {
     .split('\n')
     .map(line => line.split('\t'))
     .filter(cols => cols.length >= 3 && /^R-\d{4}$/.test(cols[0] ?? ''))
-    .map(([id = '', since = '', ...text]) => ({ id, since, text: text.join(' ') }))
+    .map(([id = '', since = '', ...rest]) => {
+      const kind = rest.length > 1 && /^(yes-no|open)$/.test(rest[rest.length - 1] ?? '') ? rest.pop() : 'open'
+      return { id, since, text: rest.join(' '), yesNo: kind === 'yes-no' }
+    })
 }
 
 export function age(since: string, now: number): string {
@@ -39,6 +42,9 @@ async function refresh($: EngineInterface): Promise<void> {
   await update($, checkedAt, () => now)
 }
 
+const keyOf = (prefix: string, a: Ask) => `${prefix}-${a.id}-${a.since}`
+
+// Approving buttons get no digit hotkey: a bare digit typed into an empty prompt presses a band Button.
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -60,26 +66,66 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    // Draw ours above whatever the other plugins draw; the engine's own placeholder is never nested.
+    const drawn = await Promise.resolve(next(e)).catch(() => null)
+    const below = drawn && typeof drawn === 'object' && (drawn as { type?: string }).type !== 'engine' ? drawn : null
     const list = await read($, asks)
-    if (e.props.hasSurvey || list.length === 0) return next(e)
+    if (e.props.hasSurvey || list.length === 0) return drawn ?? next(e)
 
     const now = await read($, checkedAt)
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const shown = list.slice(0, SHOWN)
+
+    const send = async (text: string) => {
+      await $.prompt.submit({ text, asUser: true })
+      await refresh($)
+    }
+    const yesToAll = async () => {
+      const covered = (await read($, asks)).slice(0, SHOWN).filter(a => a.yesNo)
+      if (covered.length > 0) await send(`yes to all: ${covered.map(a => `${a.id} — ${a.text}`).join('; ')}`)
+    }
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="warning">
-        <Text color="warning" weight="bold">
-          Waiting on you ({list.length})
-        </Text>
-        {list.slice(0, SHOWN).map(a => (
-          <Text key={`${a.id}-${a.since}`} wrap="truncate-end">
-            <Text dimColor>
-              {a.id} · {age(a.since, now)} ·{' '}
+      <Box flexDirection="column">
+        <Box flexDirection="column" borderStyle="round" borderColor="warning">
+          <Box flexDirection="row" gap={1}>
+            <Text color="warning" weight="bold">
+              Waiting on you ({list.length})
             </Text>
-            {a.text}
-          </Text>
-        ))}
-        {list.length > SHOWN ? <Text dimColor>+{list.length - SHOWN} more: req asks</Text> : null}
+            {shown.filter(a => a.yesNo).length > 1 ? (
+              <Button key="yes-all" label="Yes to all" hotkey="a" plain onPress={yesToAll} />
+            ) : null}
+          </Box>
+          {shown.map((a, i) => (
+            <Box key={keyOf('row', a)} flexDirection="row" gap={1}>
+              <Box flexShrink={1}>
+                <Text wrap="truncate-end">
+                  <Text dimColor>
+                    {a.id} · {age(a.since, now)} ·{' '}
+                  </Text>
+                  {a.text}
+                </Text>
+              </Box>
+              {a.yesNo ? (
+                <Button key={keyOf('yes', a)} label="Yes" onPress={() => send(`${a.id}: yes — ${a.text}`)} />
+              ) : null}
+              <Button
+                key={keyOf('answer', a)}
+                label="Answer"
+                hotkey={String(i + 1)}
+                plain
+                autoFocus={i === 0 ? true : undefined}
+                onPress={async () => {
+                  await $.prompt.fill({ text: `${a.id}: `, mode: 'insert' })
+                  await refresh($)
+                }}
+              />
+            </Box>
+          ))}
+          {list.length > SHOWN ? <Text dimColor>+{list.length - SHOWN} more: req asks</Text> : null}
+          <Text dimColor>ctrl+x tab to answer from here</Text>
+        </Box>
+        {below}
       </Box>
     )
   })
