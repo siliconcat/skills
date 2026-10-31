@@ -60,7 +60,7 @@ The worker knows only its role file and your brief. Every brief states:
 - the goal and why it matters, with the request id
 - the scope: what to look at, what not to touch
 - what is already known or ruled out, as pointers (request id, PR, file:line, report path) rather than pasted copies
-- for a job on a GitHub issue, the line `Issue: <owner>/<repo>#<n>  Job: build` (or `Job: plan`), which the builder's `issue-check` hook reads to stop the worker leaving the issue claimed with no PR
+- for a job on a GitHub issue, the line `Issue: <owner>/<repo>#<n>  Job: build` (or `Job: plan`), which the builder's `issue-check` hook reads, as does `skill-check`, which holds a build job to the skills its role names (a brief with no issue still says `Job: build`) to stop the worker leaving the issue claimed with no PR
 - the verification tier, for building and verifying jobs (section 4)
 - what evidence to return (commands with output, file:line, links)
 - where the full report goes: `director/reports/R-NNNN-<worker>.md`. The role file and its `report-check` hook hold the worker to a reply of at most 15 lines that ends with that path; read the file when the summary isn't enough.

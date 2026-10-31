@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Stop hook for director build workers (a role file's Stop hook runs as SubagentStop): a worker whose
+# latest brief says "Job: build" must have loaded every skill named as an argument through the Skill
+# tool before it stops. `skill-check tdd code-review` accepts "tdd" or "<plugin>:tdd".
+# Any missing input lets the worker stop.
+set -euo pipefail
+
+[[ $# -gt 0 ]] || exit 0
+in=$(cat)
+[[ $(jq -r '.stop_hook_active // false' <<< "$in") == true ]] && exit 0
+t=$(jq -r '.agent_transcript_path // .transcript_path // empty' <<< "$in")
+[[ -f $t ]] || exit 0
+
+# A resumed worker gets its next job as a later user message, so the last "Job:" line decides.
+briefs=$(jq -rs '[.[] | select(.type == "user") | .message.content | if type == "array" then map(.text // "") | join("\n") else . // "" end] | join("\n")' "$t" 2>/dev/null || true)
+job=$(tr -d '`*' <<< "$briefs" | grep -ioE 'Job: *[a-z]+' | tail -1 || true)
+shopt -s nocasematch
+[[ $job =~ Job:\ *build ]] || exit 0
+shopt -u nocasematch
+
+loaded=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "Skill") | .input.skill // empty' "$t" 2>/dev/null || true)
+missing=()
+for s in "$@"; do
+  grep -qxE "([^:]+:)?${s//./\\.}" <<< "$loaded" || missing+=("$s")
+done
+[[ ${#missing[@]} -eq 0 ]] && exit 0
+
+list=$(IFS=,; echo "${missing[*]}" | sed 's/,/, /g')
+jq -n --arg r "This build job requires loading these skills with the Skill tool before you finish; not loaded yet: $list. Load each one, apply it to your change (for a review skill, review your own diff and fix what it finds), update your report, then reply." '{decision: "block", reason: $r}'

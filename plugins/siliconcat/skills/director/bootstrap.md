@@ -48,6 +48,8 @@ hooks:                       # every role that writes a report
         - type: command          # builders only: keeps an issue from being left claimed with no PR
           command: ~/.local/share/director/bin/issue-check
           timeout: 60
+        - type: command          # builders only: the skills named here must be loaded on a build job (`Job: build` in the brief)
+          command: ~/.local/share/director/bin/skill-check <skill> [<skill>...]
 model: <haiku|sonnet|opus>
 ---
 
