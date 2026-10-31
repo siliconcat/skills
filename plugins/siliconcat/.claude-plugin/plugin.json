@@ -1,6 +1,6 @@
 {
   "name": "siliconcat",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Silicon Cat Technologies' skills for Claude Code and Codex: director, which runs each request through your project's roles as subagents, with a band that shows what it is waiting on from you.",
   "author": {
     "name": "Silicon Cat Technologies"
