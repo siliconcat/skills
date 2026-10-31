@@ -105,7 +105,7 @@ async function band($: any, on: any, stdout: string) {
   })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  return { ui, sent, filled }
+  return { ui, sent, filled, set: (s: string) => (stdout = s) }
 }
 
 test('the band stacks above what the other plugins draw', async ($, on) => {
@@ -120,14 +120,16 @@ test('Yes is only on yes-no asks and submits the ask with the answer', async ($,
   expect(await ui.findAll({ type: 'Button', text: /^Yes$/ })).toHaveLength(2)
   expect(await ui.findAll({ type: 'Button', text: /^Answer$/ })).toHaveLength(3)
 
-  await ui.press({ key: 'yes-R-0004-2026-10-30T15:42Z' })
+  const yes = await ui.findAll({ type: 'Button', text: /^Yes$/ })
+  await ui.press({ key: yes[1].key })
   expect(sent).toEqual(['R-0004: yes — deploy to dev?'])
   await ui.unmount()
 })
 
 test('Answer puts the id into the prompt without losing the draft', async ($, on) => {
   const { ui, filled } = await band($, on, ASKS)
-  await ui.press({ key: 'answer-R-0006-2026-10-30T15:41Z' })
+  const answers = await ui.findAll({ type: 'Button', text: /^Answer$/ })
+  await ui.press({ key: answers[1].key })
   expect(filled).toEqual([{ text: 'R-0006: ', mode: 'insert' }])
   await ui.unmount()
 })
@@ -181,16 +183,75 @@ test('buttons are reachable from the keyboard and no approving button takes a di
   const { ui } = await band($, on, ASKS)
 
   const buttons = await ui.findAll({ type: 'Button' })
-  const yes = buttons.filter((b: B) => /^(yes-R|yes-all)/.test(b.key ?? ''))
+  const yes = buttons.filter((b: B) => /^yes-/.test(b.key ?? ''))
   expect(yes).toHaveLength(3)
   for (const b of yes) expect(String(b.props.hotkey ?? '')).not.toMatch(/\d/)
   expect(buttons.find((b: B) => b.key === 'yes-all')?.props.hotkey).toBe('a')
 
   const answers = buttons.filter((b: B) => /^answer-/.test(b.key ?? ''))
-  expect(answers.map((b: B) => b.props.hotkey)).toEqual(['1', '2', '3'])
+  expect(answers.map((b: B) => b.props.hotkey)).toEqual([undefined, undefined, undefined])
+  for (const b of buttons) expect(String(b.props.hotkey ?? '')).not.toMatch(/\d/)
   expect(answers.map((b: B) => b.props.autoFocus)).toEqual([true, undefined, undefined])
   expect(buttons.filter((b: B) => b.props.autoFocus)).toHaveLength(1)
 
   expect(await ui.find({ type: 'Text', text: /ctrl\+x tab to answer from here/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('two asks of one request in the same minute get their own buttons', async ($, on) => {
+  const { ui, sent } = await band(
+    $,
+    on,
+    'R-0007\t2026-10-30T15:40Z\tapprove merging #96\tyes-no\nR-0007\t2026-10-30T15:40Z\tapprove deploy to prod\tyes-no'
+  )
+  const keys = (await ui.findAll({ type: 'Button' })).map((b: B) => b.key)
+  expect(new Set(keys).size).toBe(keys.length)
+
+  const yes = await ui.findAll({ type: 'Button', text: /^Yes$/ })
+  await ui.press({ key: yes[1].key })
+  expect(sent).toEqual(['R-0007: yes — approve deploy to prod'])
+  await ui.unmount()
+})
+
+test('Yes to all says how many asks it covers', async ($, on) => {
+  const { ui } = await band($, on, ASKS)
+  expect((await ui.find({ type: 'Button', text: /Yes to all/ }))?.text).toMatch(/Yes to all \(2\)/)
+  await ui.unmount()
+})
+
+test('a Yes for an ask that is gone or reworded sends nothing', async ($, on) => {
+  const gone = await band($, on, ASKS)
+  const yes = await gone.ui.findAll({ type: 'Button', text: /^Yes$/ })
+  gone.set('R-0007\t2026-10-30T15:40Z\tmerge #97 and drop the table\tyes-no\nR-0006\t2026-10-30T15:41Z\tpick a name\topen')
+  await gone.ui.press({ key: yes[0].key })
+  expect(gone.sent).toEqual([])
+  await gone.ui.unmount()
+})
+
+test('Yes to all sends only the asks still open at press time', async ($, on) => {
+  const { ui, sent, set } = await band($, on, ASKS)
+  await ui.findAll({ type: 'Button' })
+  set('R-0007\t2026-10-30T15:40Z\tmerge #97?\tyes-no\nR-0006\t2026-10-30T15:41Z\tpick a name\topen')
+  await ui.press({ key: 'yes-all' })
+  expect(sent).toEqual(['yes to all: R-0007 — merge #97?'])
+  await ui.unmount()
+})
+
+test('a pressed Yes is hidden, so a second press cannot approve twice', async ($, on) => {
+  const { ui, sent } = await band($, on, ASKS)
+  const yes = await ui.findAll({ type: 'Button', text: /^Yes$/ })
+  await ui.press({ key: yes[0].key })
+  expect(await ui.findAll({ type: 'Button', text: /^Yes$/ })).toHaveLength(1)
+  expect(await ui.find({ type: 'Button', text: /Yes to all/ })).toBe(undefined)
+  await ui.press({ key: 'yes-all' }).catch(() => undefined)
+  expect(sent).toEqual(['R-0007: yes — merge #97?'])
+  await ui.unmount()
+})
+
+test('Yes to all then hides every Yes it covered', async ($, on) => {
+  const { ui, sent } = await band($, on, ASKS)
+  await ui.press({ key: 'yes-all' })
+  expect(await ui.findAll({ type: 'Button', text: /^Yes$/ })).toHaveLength(0)
+  expect(sent).toHaveLength(1)
   await ui.unmount()
 })

@@ -113,7 +113,7 @@ out=$(req asks)
 grep -qE "^$aid	[0-9T:Z-]+	approve merging #96	open\$" <<< "$out" || fail "asks output: $out"
 perl -pi -e 's/^- \[ \] \d{4}-\S+/- [ ] 2020-01-01T00:00Z:/' "director/requests/open/$aid.md"
 out=$(req lint 2>/dev/null || true)
-grep -q "$aid has waited on the user since 2020-01-01T00:00Z: approve merging #96" <<< "$out" || fail "lint missed an old ask: $out"
+grep -q "$aid has waited on the user since 2020-01-01T00:00Z: approve merging #96\$" <<< "$out" || fail "lint missed an old ask: $out"
 req ask "$aid" --done > /dev/null
 [[ -z $(req asks) ]] || fail "ask still open after --done"
 printf -- '- [ ] 2020-01-01T00:00Z: an old line\n' >> "director/requests/open/$aid.md"
@@ -121,8 +121,19 @@ grep -qE "^$aid	2020-01-01T00:00Z	an old line	open\$" <<< "$(req asks)" || fail 
 req ask "$aid" "merge #97?" --yes-no > /dev/null
 out=$(req asks)
 grep -qE "^$aid	[0-9T:Z-]+	merge #97\?	yes-no\$" <<< "$out" || fail "yes-no ask output: $out"
+req ask "$aid" --yes-no "flag first" > /dev/null
+grep -qE "^$aid	[0-9T:Z-]+	flag first	yes-no\$" <<< "$(req asks)" || fail "--yes-no before the text was not read as the flag"
+before=$(req asks | wc -l)
+req ask "$aid" "typo" --yes_no > /dev/null 2>&1 && fail "an unknown flag after the text was accepted"
+req ask "$aid" --bogus > /dev/null 2>&1 && fail "an unknown flag as the text was accepted"
+req ask "$aid" "two" "texts" > /dev/null 2>&1 && fail "two texts were accepted"
+[[ $(req asks | wc -l) == "$before" ]] || fail "a refused ask was stored"
+long=$(printf 'x%.0s' $(seq 101))
+req ask "$aid" "$long" --yes-no > /dev/null 2>&1 && fail "a yes-no ask over 100 characters was accepted"
+req ask "$aid" "${long:1}" --yes-no > /dev/null 2>&1 || fail "a 100 character yes-no ask was refused"
+req ask "$aid" "$long$long" > /dev/null 2>&1 || fail "a long open ask was refused"
 req ask "$aid" "second ask" > /dev/null
-[[ $(grep -c "	open\$" <<< "$(req asks)") == 2 ]] || fail "a plain ask is not open-ended"
+[[ $(req asks | grep -c "	open\$") == 3 ]] || fail "a plain ask is not open-ended"
 req status "$aid" dropped "test" > /dev/null
 [[ -z $(req asks) ]] || fail "closing left an ask open"
 grep -q "^asks test - \[ \] not an ask\$" "director/requests/closed/$aid.md" || fail "closing touched request text"

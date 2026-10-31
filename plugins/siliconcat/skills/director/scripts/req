@@ -16,7 +16,7 @@ req status ID STATUS [--force] [OUTCOME]
 req worker ID [--retire] NAME...  record the workers a request used, or mark them shut down
 req receipt ID URL...             record links to PRs, runs, tickets
 req ask ID TEXT [--yes-no] | ID --done
-                                  record what you need from the user (--yes-no: a plain yes answers it), or that they answered
+                                  record what you need from the user (--yes-no, up to 100 characters: a plain yes answers it), or that they answered
 req asks                          open asks of open requests: id, since (UTC), text, yes-no|open, tab-separated
 req rework ID WORKER WHY          record a round of rework: a failed verify, a user correction, a reopen
 req stats                         closed requests without rework, and rework rounds by role
@@ -209,10 +209,22 @@ cmd_receipt() {
   echo "$id receipts recorded"
 }
 
+YES_NO_MAX=100
 # what the director waits on from the user, as "- [ ] <UTC time>: <text>" lines under "## Asks"; a yes-no ask has " (yes-no)" after the time
 cmd_ask() {
-  local id=${1:?id} text=${2:?what you need from the user, or --done} kind=""
-  [[ ${3:-} == --yes-no ]] && kind=" (yes-no)"
+  local id=${1:?id}; shift
+  local text="" kind="" a
+  for a in "$@"; do
+    case $a in
+      --yes-no) kind=" (yes-no)" ;;
+      --done) [[ -z $text ]] || die "--done takes no text"; text=--done ;;
+      --*) die "unknown flag $a (flags: --yes-no, --done)" ;;
+      *) [[ -z $text ]] || die "one text per ask, quote it"; text=$a ;;
+    esac
+  done
+  [[ -n $text ]] || die "what you need from the user, or --done"
+  text=${text//$'\n'/ }
+  [[ -z $kind || ${#text} -le $YES_NO_MAX ]] || die "a --yes-no ask is at most $YES_NO_MAX characters, so the whole text shows next to its Yes (this one is ${#text}); shorten it or leave out --yes-no"
   local f; f=$(path_of "$id")
   lock
   if [[ $text == --done ]]; then
@@ -221,7 +233,7 @@ cmd_ask() {
     return
   fi
   grep -qx '## Asks' "$f" || printf '\n## Asks\n' >> "$f"
-  append_to_section "$f" Asks "- [ ] $(date -u +%Y-%m-%dT%H:%MZ)$kind: ${text//$'\n'/ }"
+  append_to_section "$f" Asks "- [ ] $(date -u +%Y-%m-%dT%H:%MZ)$kind: $text"
   echo "$id ask recorded"
 }
 
@@ -399,7 +411,7 @@ cmd_lint() {
     [[ -n $f ]] && w "$(basename "$f" .md) untouched for over 7 days"
   done < <(find "$REQ/open" -name 'R-*.md' -mtime +7)
   local day; day=$(date -u -v-1d +%Y-%m-%dT%H:%MZ 2>/dev/null || date -u -d '1 day ago' +%Y-%m-%dT%H:%MZ)
-  while IFS=$'\t' read -r f since text; do
+  while IFS=$'\t' read -r f since text _; do
     [[ -n $f && $since < $day ]] && w "$f has waited on the user since $since: $text"
   done < <(cmd_asks)
   local live
