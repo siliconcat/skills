@@ -11,6 +11,17 @@ const pressed = atom({ plugin: 'siliconcat', key: 'pressed' } as const, [] as st
 // req (linked there by the skill) finds the project's request store from the session's directory and prints nothing outside one.
 const REQ_ASKS = ['bash', '-c', 'exec "$HOME/.local/share/director/bin/req" asks']
 const SHOWN = 5
+// A yes-no row is drawn whole, wrapped, so only a few of them go in the band.
+const MAX_YES_NO = 3
+
+export function visible(list: Ask[]): Ask[] {
+  const out: Ask[] = []
+  for (const a of list) {
+    if (out.length === SHOWN || (a.yesNo && out.filter(x => x.yesNo).length === MAX_YES_NO)) break
+    out.push(a)
+  }
+  return out
+}
 
 export function parse(stdout: string): Ask[] {
   return stdout
@@ -43,25 +54,46 @@ async function fetchAsks($: EngineInterface): Promise<Ask[] | null> {
   return null
 }
 
-async function refresh($: EngineInterface): Promise<void> {
+// Asks a Yes was sent for and not yet closed, set before the press's first await so a second press at once finds them taken.
+const held = new Set<string>()
+// What the band last drew, so a press acts on the rows the user saw.
+let drawnCoverable: Ask[] = []
+
+async function refresh($: EngineInterface, keepOnFailure = false): Promise<void> {
   const fetched = await fetchAsks($)
+  if (!fetched && keepOnFailure) return
   const found = fetched ?? []
   const now = await $.clock.now()
   await update($, asks, () => found)
   await update($, checkedAt, () => now)
-  if (fetched) await update($, pressed, p => p.filter(x => found.some(a => sig(a) === x)))
+  if (!fetched) return
+  for (const x of held) if (!found.some(a => sig(a) === x)) held.delete(x)
+  await update($, pressed, p => p.filter(x => found.some(a => sig(a) === x)))
 }
 
-// Sends one approval for `targets` that `req asks` still lists with the same text, and hides their Yes buttons first so a second press cannot repeat it.
+async function release($: EngineInterface, sigs: string[]): Promise<void> {
+  for (const x of sigs) held.delete(x)
+  await update($, pressed, p => p.filter(x => !sigs.includes(x)))
+}
+
+// Sends one approval for `targets` that `req asks` still lists with the same text; their Yes buttons are hidden until the ask closes.
 async function approve($: EngineInterface, targets: Ask[], message: (live: Ask[]) => string): Promise<void> {
-  const sigs = targets.map(sig)
+  const fresh = targets.filter(t => !held.has(sig(t)))
+  if (fresh.length === 0) return
+  const sigs = fresh.map(sig)
+  for (const x of sigs) held.add(x)
   await update($, pressed, p => [...p, ...sigs])
   const found = await fetchAsks($)
-  if (!found) await update($, pressed, p => p.filter(x => !sigs.includes(x)))
-  const live = targets.filter(t => found?.some(a => a.yesNo && sig(a) === sig(t)))
-  // asUser: the person pressed the button, so the model reads their words, not "the plugin sent a message"
-  if (live.length > 0) await $.prompt.submit({ text: message(live), asUser: true })
-  await refresh($)
+  const live = fresh.filter(t => found?.some(a => a.yesNo && sig(a) === sig(t)))
+  if (live.length > 0) {
+    try {
+      // asUser: the person pressed the button, so the model reads their words, not "the plugin sent a message"
+      await $.prompt.submit({ text: message(live), asUser: true })
+    } catch {
+      await release($, sigs)
+    }
+  } else if (!found) await release($, sigs)
+  await refresh($, true)
 }
 
 const keyOf = (prefix: string, i: number, a: Ask) => `${prefix}-${i}-${a.id}-${a.since}`
@@ -97,15 +129,13 @@ export const register: Register = on => {
     const now = await read($, checkedAt)
     const done = await read($, pressed)
     const { Box, Button, Text } = $.ui.resolve(e)
-    const shown = list.slice(0, SHOWN)
+    const shown = visible(list)
 
     const open = (a: Ask) => a.yesNo && !done.includes(sig(a))
-    const yesToAll = async () => {
-      const pending = await read($, pressed)
-      const covered = (await read($, asks)).slice(0, SHOWN).filter(a => a.yesNo && !pending.includes(sig(a)))
-      if (covered.length > 0) await approve($, covered, live => `yes to all: ${live.map(a => `${a.id} — ${a.text}`).join('; ')}`)
-    }
-    const coverable = shown.filter(open).length
+    const yesToAll = () =>
+      approve($, drawnCoverable, live => `yes to all: ${live.map(a => `${a.id} — ${a.text}`).join('; ')}`)
+    drawnCoverable = shown.filter(open)
+    const coverable = drawnCoverable.length
 
     return (
       <Box flexDirection="column">
@@ -121,7 +151,7 @@ export const register: Register = on => {
           {shown.map((a, i) => (
             <Box key={keyOf('row', i, a)} flexDirection="row" gap={1}>
               <Box flexShrink={1}>
-                <Text wrap="truncate-end">
+                <Text wrap={a.yesNo ? 'wrap' : 'truncate-end'}>
                   <Text dimColor>
                     {a.id} · {age(a.since, now)} ·{' '}
                   </Text>
@@ -142,7 +172,7 @@ export const register: Register = on => {
               />
             </Box>
           ))}
-          {list.length > SHOWN ? <Text dimColor>+{list.length - SHOWN} more: req asks</Text> : null}
+          {list.length > shown.length ? <Text dimColor>+{list.length - shown.length} more: req asks</Text> : null}
           <Text dimColor>ctrl+x tab to answer from here</Text>
         </Box>
         {below}

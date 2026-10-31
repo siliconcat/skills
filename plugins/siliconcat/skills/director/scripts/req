@@ -224,7 +224,7 @@ cmd_ask() {
   done
   [[ -n $text ]] || die "what you need from the user, or --done"
   text=${text//$'\n'/ }
-  [[ -z $kind || ${#text} -le $YES_NO_MAX ]] || die "a --yes-no ask is at most $YES_NO_MAX characters, so the whole text shows next to its Yes (this one is ${#text}); shorten it or leave out --yes-no"
+  [[ -z $kind || ${#text} -le $YES_NO_MAX ]] || die "a --yes-no ask is one short sentence, at most $YES_NO_MAX characters (this one is ${#text}); shorten it or leave out --yes-no"
   local f; f=$(path_of "$id")
   lock
   if [[ $text == --done ]]; then

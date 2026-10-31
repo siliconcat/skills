@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { age, parse } from './register'
+import { age, parse, visible } from './register'
 
 const BAND = {
   plugin: 'siliconcat',
@@ -84,14 +84,17 @@ const ASKS = [
   'R-0004\t2026-10-30T15:42Z\tdeploy to dev?\tyes-no',
 ].join('\n')
 
-async function band($: any, on: any, stdout: string) {
+async function band($: any, on: any, stdout: string, opts: { submitFails?: boolean } = {}) {
+  let code = 0
   const sent: string[] = []
   const filled: { text: string; mode?: string }[] = []
-  on('process.run', () => ({ value: { exitCode: 0, stdout, stderr: '' } }))
+  on('process.run', () => ({ value: { exitCode: code, stdout, stderr: '' } }))
   on('clock.now', () => ({ value: NOW }))
-  on('clock.every', () => ({ value: undefined }))
+  // never resolves, so the 60 s interval does not loop as fast as the stand-in answers
+  on('clock.every', () => new Promise(() => {}))
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
   on('prompt.submit', (_: any, e: any) => {
+    if (opts.submitFails) throw new Error('refused')
     sent.push(e.text)
     return { text: e.text }
   })
@@ -105,7 +108,7 @@ async function band($: any, on: any, stdout: string) {
   })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  return { ui, sent, filled, set: (s: string) => (stdout = s) }
+  return { ui, sent, filled, set: (s: string) => (stdout = s), reqDown: () => (code = 1) }
 }
 
 test('the band stacks above what the other plugins draw', async ($, on) => {
@@ -152,7 +155,7 @@ test('Yes to all leaves out a yes-no ask scrolled into +N more', async ($, on) =
   const rows = Array.from({ length: 7 }, (_, i) => `R-001${i}\t2026-10-30T15:4${i}Z\tq${i}\tyes-no`)
   const { ui, sent } = await band($, on, rows.join('\n'))
   await ui.press({ key: 'yes-all' })
-  expect(sent).toEqual(['yes to all: R-0010 — q0; R-0011 — q1; R-0012 — q2; R-0013 — q3; R-0014 — q4'])
+  expect(sent).toEqual(['yes to all: R-0010 — q0; R-0011 — q1; R-0012 — q2'])
   await ui.unmount()
 })
 
@@ -253,5 +256,68 @@ test('Yes to all then hides every Yes it covered', async ($, on) => {
   await ui.press({ key: 'yes-all' })
   expect(await ui.findAll({ type: 'Button', text: /^Yes$/ })).toHaveLength(0)
   expect(sent).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('visible stops at five asks or the fourth yes-no ask, in order', async () => {
+  const a = (id: string, yesNo: boolean) => ({ id, since: 's', text: id, yesNo })
+  const many = [a('R-1', false), a('R-2', true), a('R-3', true), a('R-4', true), a('R-5', true), a('R-6', false)]
+  expect(visible(many).map(x => x.id)).toEqual(['R-1', 'R-2', 'R-3', 'R-4'])
+  expect(visible([1, 2, 3, 4, 5, 6].map(n => a(`R-${n}`, false)))).toHaveLength(5)
+})
+
+test('a yes-no row wraps so all of its text is on screen; an open row may truncate', async ($, on) => {
+  const { ui } = await band($, on, ASKS)
+  const texts = await ui.findAll({ type: 'Text' })
+  const wrapOf = (re: RegExp) => texts.find((t: { text: string }) => re.test(t.text))?.props.wrap
+  expect(wrapOf(/merge #97\?/)).toBe('wrap')
+  expect(wrapOf(/deploy to dev\?/)).toBe('wrap')
+  expect(wrapOf(/pick a name/)).toBe('truncate-end')
+  await ui.unmount()
+})
+
+test('four yes-no asks draw three with Yes and say how many wait behind', async ($, on) => {
+  const rows = Array.from({ length: 4 }, (_, i) => `R-001${i}\t2026-10-30T15:4${i}Z\tq${i}\tyes-no`)
+  const { ui } = await band($, on, rows.join('\n'))
+  expect(await ui.findAll({ type: 'Button', text: /^Yes$/ })).toHaveLength(3)
+  expect(await ui.find({ type: 'Text', text: /\+1 more/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('two presses of one Yes at once send one approval', async ($, on) => {
+  const { ui, sent } = await band($, on, ASKS)
+  const yes = await ui.findAll({ type: 'Button', text: /^Yes$/ })
+  await Promise.all([ui.press({ key: yes[0].key }), ui.press({ key: yes[0].key }).catch(() => undefined)])
+  expect(sent).toEqual(['R-0007: yes — merge #97?'])
+  await ui.unmount()
+})
+
+test('Yes and Yes to all at once approve each ask once', async ($, on) => {
+  const { ui, sent } = await band($, on, ASKS)
+  const yes = await ui.findAll({ type: 'Button', text: /^Yes$/ })
+  await Promise.all([ui.press({ key: yes[0].key }), ui.press({ key: 'yes-all' }).catch(() => undefined)])
+  const text = sent.join(' | ')
+  expect(text.match(/R-0007/g)).toHaveLength(1)
+  expect(text.match(/R-0004/g)).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a refused submit gives the Yes back', async ($, on) => {
+  const { ui, sent } = await band($, on, ASKS, { submitFails: true })
+  const yes = await ui.findAll({ type: 'Button', text: /^Yes$/ })
+  await ui.press({ key: yes[0].key }).catch(() => undefined)
+  expect(sent).toEqual([])
+  expect(await ui.findAll({ type: 'Button', text: /^Yes$/ })).toHaveLength(2)
+  await ui.unmount()
+})
+
+test('req failing at press time sends nothing and keeps the band', async ($, on) => {
+  const { ui, sent, reqDown } = await band($, on, ASKS)
+  const yes = await ui.findAll({ type: 'Button', text: /^Yes$/ })
+  reqDown()
+  await ui.press({ key: yes[0].key })
+  expect(sent).toEqual([])
+  expect(await ui.find({ type: 'Text', text: /Waiting on you \(3\)/ })).toBeDefined()
+  expect(await ui.findAll({ type: 'Button', text: /^Yes$/ })).toHaveLength(2)
   await ui.unmount()
 })
