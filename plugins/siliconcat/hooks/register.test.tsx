@@ -18,6 +18,20 @@ const BAND = {
 type B = { key?: string; props: Record<string, unknown> }
 const NOW = Date.parse('2026-10-30T16:00Z')
 
+// Stands in for the session id, the skill loader and $.store; returns the store so a test can read what was kept.
+function session(on: any, id = 's-1', store: Record<string, unknown> = {}) {
+  on('session.id', () => ({ value: id }))
+  on('skill.prompt', (_: any, e: any) => ({ text: e.text }))
+  on('store.get', (_: any, e: any) => ({ value: store[e.key] }))
+  on('store.set', (_: any, e: any) => {
+    store[e.key] = e.value
+    return { value: undefined }
+  })
+  return store
+}
+
+const loadDirector = ($: any) => $.skill.prompt({ skill: 'siliconcat:director', text: '', pluginName: 'siliconcat' })
+
 test('parse reads req asks and skips anything else', async () => {
   expect(parse('R-0005\t2026-10-30T15:40Z\tapprove merging #96\nnoise\n')).toEqual([
     { id: 'R-0005', since: '2026-10-30T15:40Z', text: 'approve merging #96', yesNo: false },
@@ -51,7 +65,9 @@ test('the band lists what the director waits on, on every surface', async ($, on
     return <Text>engine</Text>
   })
 
+  session(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await loadDirector($)
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
@@ -71,7 +87,9 @@ test('no asks, no band', async ($, on) => {
     return <Text>engine</Text>
   })
 
+  session(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await loadDirector($)
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /Waiting on you/ })).toBe(undefined)
@@ -106,7 +124,9 @@ async function band($: any, on: any, stdout: string, opts: { submitFails?: boole
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
   })
+  session(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await loadDirector($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   return { ui, sent, filled, set: (s: string) => (stdout = s), reqDown: () => (code = 1) }
 }
@@ -175,7 +195,9 @@ test('a press refreshes the asks', async ($, on) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
   })
+  session(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await loadDirector($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'yes-all' })
   expect(await ui.find({ type: 'Text', text: /Waiting on you/ })).toBe(undefined)
@@ -319,5 +341,50 @@ test('req failing at press time sends nothing and keeps the band', async ($, on)
   expect(sent).toEqual([])
   expect(await ui.find({ type: 'Text', text: /Waiting on you \(3\)/ })).toBeDefined()
   expect(await ui.findAll({ type: 'Button', text: /^Yes$/ })).toHaveLength(2)
+  await ui.unmount()
+})
+
+async function engine($: any, on: any) {
+  let runs = 0
+  on('process.run', () => {
+    runs++
+    return { value: { exitCode: 0, stdout: ASKS, stderr: '' } }
+  })
+  on('clock.now', () => ({ value: NOW }))
+  on('clock.every', () => new Promise(() => {}))
+  on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
+  on('ui.render', ($: any, e: any) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+  return () => runs
+}
+
+test('a session that never loaded the director skill shows no band and runs no req', async ($, on) => {
+  const runs = await engine($, on)
+  session(on, 's-other')
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.skill.prompt({ skill: 'commit', text: '', pluginName: 'other' })
+  await $.turn.complete({} as any).catch(() => undefined)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /Waiting on you/ })).toBe(undefined)
+  expect(runs()).toBe(0)
+  await ui.unmount()
+})
+
+test('loading the director skill keeps the session id, so a resumed session shows the band at start', async ($, on) => {
+  await engine($, on)
+  const store = session(on, 's-dir', { directorSessions: ['s-old'] })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await loadDirector($)
+  expect(store.directorSessions).toEqual(['s-old', 's-dir'])
+})
+
+test('a resumed director session shows the band without loading the skill again', async ($, on) => {
+  await engine($, on)
+  session(on, 's-dir', { directorSessions: ['s-dir'] })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /Waiting on you \(3\)/ })).toBeDefined()
   await ui.unmount()
 })

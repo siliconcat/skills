@@ -7,6 +7,11 @@ const asks = atom({ plugin: 'siliconcat', key: 'asks' } as const, [] as Ask[])
 const checkedAt = atom({ plugin: 'siliconcat', key: 'checkedAt' } as const, 0)
 // asks a Yes was already sent for, by sig(); they stay hidden until the ask is closed
 const pressed = atom({ plugin: 'siliconcat', key: 'pressed' } as const, [] as string[])
+// Only the session that loaded the director skill shows the band: a Yes pressed in any other session never reaches the director.
+const director = atom({ plugin: 'siliconcat', key: 'director' } as const, false)
+// Director session ids, in $.store so a resumed director session keeps its band.
+const DIRECTOR_SESSIONS = 'directorSessions'
+const KEPT_SESSIONS = 50
 
 // req (linked there by the skill) finds the project's request store from the session's directory and prints nothing outside one.
 const REQ_ASKS = ['bash', '-c', 'exec "$HOME/.local/share/director/bin/req" asks']
@@ -59,7 +64,13 @@ const held = new Set<string>()
 // What the band last drew, so a press acts on the rows the user saw.
 let drawnCoverable: Ask[] = []
 
+async function directorSessions($: EngineInterface): Promise<string[]> {
+  const ids = await $.store.get(DIRECTOR_SESSIONS)
+  return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : []
+}
+
 async function refresh($: EngineInterface, keepOnFailure = false): Promise<void> {
+  if (!(await read($, director))) return
   const fetched = await fetchAsks($)
   if (!fetched && keepOnFailure) return
   const found = fetched ?? []
@@ -102,10 +113,23 @@ const keyOf = (prefix: string, i: number, a: Ask) => `${prefix}-${i}-${a.id}-${a
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    if ((await directorSessions($)).includes(await $.session.id())) await update($, director, () => true)
     await refresh($)
     $.clock.every(60_000, () => refresh($))
     return started
   })
+
+  on('skill.prompt', async ($, e, next) => {
+    const loaded = await next(e)
+    if (e.pluginName === 'siliconcat' && /(^|:)director$/.test(e.skill)) {
+      const id = await $.session.id()
+      const ids = await directorSessions($)
+      if (!ids.includes(id)) await $.store.set(DIRECTOR_SESSIONS, [...ids, id].slice(-KEPT_SESSIONS))
+      await update($, director, () => true)
+      await refresh($)
+    }
+    return loaded
+  }).catch(($, e, next) => next(e))
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
@@ -124,7 +148,7 @@ export const register: Register = on => {
     const drawn = await Promise.resolve(next(e)).catch(() => null)
     const below = drawn && typeof drawn === 'object' && (drawn as { type?: string }).type !== 'engine' ? drawn : null
     const list = await read($, asks)
-    if (e.props.hasSurvey || list.length === 0) return drawn ?? next(e)
+    if (e.props.hasSurvey || list.length === 0 || !(await read($, director))) return drawn ?? next(e)
 
     const now = await read($, checkedAt)
     const done = await read($, pressed)
