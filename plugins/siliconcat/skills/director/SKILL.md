@@ -130,4 +130,5 @@ State lives in one markdown file per request under `director/requests/{open,clos
 - Delegate; read only what you need to brief a worker or check its result.
 - Approvals the hard rules reserve belong to the user: a yes covers that one action, not the next.
 - Every gate whose trigger applies signs off, however small the change looks.
+- A merge you make waits for every check on the PR's head to finish green, in the same command: `gh pr checks <n> --watch --fail-fast && gh pr merge <n> ...`. A green run on an earlier attempt doesn't count while a re-run is pending.
 - Relay findings with their evidence, and mark anything else as unverified.
