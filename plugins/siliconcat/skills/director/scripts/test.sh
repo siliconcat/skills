@@ -153,6 +153,32 @@ rc "$(printf 'line %s\n' $(seq 1 20); echo 'deleted dags/a_dag.py')" | grep -q '
 [[ -z $(rc 'Done, all good.' true) ]] || fail "report-check blocked twice in a row"
 [[ -z $(echo '{}' | "$HERE/report-check") ]] || fail "report-check blocked on missing input"
 
+# issue-check stop hook, with a fake gh on PATH
+mkdir -p fakebin; cat > fakebin/gh <<'GH'
+#!/usr/bin/env bash
+[[ -n ${GH_FAIL:-} ]] && exit 1
+if [[ $2 == view ]]; then cat "$GH_ISSUE"; else echo "${GH_PRS:-[]}"; fi
+GH
+chmod +x fakebin/gh
+ic() { jq -n --arg t "$1" '{agent_transcript_path: $t, stop_hook_active: ('"${2:-false}"')}' | PATH=$T/fakebin:$PATH "$HERE/issue-check"; }
+brief() { jq -nc --arg c "$1" '{type: "user", message: {content: $c}}' > tr-$2.jsonl; echo '{"type":"assistant"}' >> tr-$2.jsonl; }
+brief $'Fix it.\nIssue: acme/app#126  Job: build\nmore' b
+brief $'Issue: acme/app#126  Job: plan' p
+brief 'no issue line here' n
+export GH_ISSUE=$T/issue.json
+echo '{"state":"OPEN","assignees":[{"login":"x"}],"labels":[{"name":"ready-for-agent"}]}' > issue.json
+ic tr-b.jsonl | grep -q 'acme/app#126' || fail "issue-check let an abandoned issue through"
+[[ -z $(ic tr-p.jsonl) ]] || fail "issue-check blocked a plan job"
+[[ -z $(ic tr-n.jsonl) ]] || fail "issue-check blocked a brief without an issue line"
+[[ -z $(ic tr-b.jsonl true) ]] || fail "issue-check blocked twice in a row"
+[[ -z $(GH_FAIL=1 ic tr-b.jsonl) ]] || fail "issue-check blocked on a gh failure"
+[[ -z $(GH_PRS='[{"number":130}]' ic tr-b.jsonl) ]] || fail "issue-check blocked an issue with an open PR"
+echo '{"state":"OPEN","assignees":[],"labels":[{"name":"ready-for-agent"}]}' > issue.json
+[[ -z $(ic tr-b.jsonl) ]] || fail "issue-check blocked an unassigned issue"
+echo '{"state":"OPEN","assignees":[{"login":"x"}],"labels":[{"name":"needs-info"}]}' > issue.json
+[[ -z $(ic tr-b.jsonl) ]] || fail "issue-check blocked a relabelled issue"
+[[ -z $(echo '{}' | "$HERE/issue-check") ]] || fail "issue-check blocked on missing input"
+
 # director-audit on a synthetic transcript
 cat > s.jsonl <<'EOF'
 {"type":"user","cwd":"CWD","message":{"content":"hi"}}

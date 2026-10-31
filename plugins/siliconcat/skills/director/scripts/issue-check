@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Stop hook for director build workers (a role file's Stop hook runs as SubagentStop): the issue named
+# by the brief's "Issue: <owner>/<repo>#<n>  Job: build" line must not be left assigned, labelled
+# ready-for-agent and without an open PR. Any missing input or gh failure lets the worker stop.
+set -euo pipefail
+
+in=$(cat)
+[[ $(jq -r '.stop_hook_active // false' <<< "$in") == true ]] && exit 0
+t=$(jq -r '.agent_transcript_path // .transcript_path // empty' <<< "$in")
+[[ -f $t ]] || exit 0
+
+# The brief is the first user message; its content is a string or a list of text blocks.
+brief=$(jq -rs '[.[] | select(.type == "user")][0].message.content | if type == "array" then map(.text // "") | join("\n") else . // "" end' "$t" 2>/dev/null || true)
+line=$(grep -m1 -E '^Issue: [^ ]+/[^ ]+#[0-9]+ +Job: ' <<< "$brief" || true)
+[[ $line =~ Issue:\ ([^ ]+/[^ #]+)#([0-9]+)\ +Job:\ ([a-z]+) ]] || exit 0
+repo=${BASH_REMATCH[1]} n=${BASH_REMATCH[2]}
+[[ ${BASH_REMATCH[3]} == build ]] || exit 0
+
+issue=$(gh issue view "$n" -R "$repo" --json state,assignees,labels 2>/dev/null) || exit 0
+[[ $(jq -r '.state == "OPEN" and (.assignees | length > 0) and any(.labels[]; .name == "ready-for-agent")' <<< "$issue") == true ]] || exit 0
+prs=$(gh pr list -R "$repo" --state open --search "$n in:body" --json number 2>/dev/null | jq length) || exit 0
+[[ $prs == 0 ]] || exit 0
+
+jq -n --arg r "Issue $repo#$n is still assigned and labelled ready-for-agent, with no open PR linking it, so nobody will pick it up. Either open a PR that links the issue; or comment what you found, relabel it needs-info or ready-for-human, and unassign it; or comment your progress and unassign it. Then reply." '{decision: "block", reason: $r}'

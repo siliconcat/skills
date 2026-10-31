@@ -45,6 +45,8 @@ hooks:                       # every role that writes a report
     - hooks:
         - type: command
           command: ~/.local/share/director/bin/report-check
+        - type: command          # builders only: keeps an issue from being left claimed with no PR
+          command: ~/.local/share/director/bin/issue-check
 model: <haiku|sonnet|opus>
 ---
 
