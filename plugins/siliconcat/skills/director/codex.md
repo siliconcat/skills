@@ -53,7 +53,7 @@ Project hooks run only once the user trusts the project's `.codex/` layer: say s
 
 ## What Codex has no equivalent for
 
-- **The band.** When `req asks` lists anything, start each status message with it ("Waiting on you: R-0005 · approve merging #96"), so the user always sees what you need from them.
+- **The band.** When `req asks` lists anything, start each status message with it ("Waiting on you: R-0005 · approve merging web-app#96"), so the user always sees what you need from them.
 - **Agent teams** and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`: ignore those lines.
 - **savvy-progress:** workers skip the progress-steps rule.
 - **`director-audit`** reads Claude Code transcripts: skip `SKILL.md` section 1 step 5, and its use at mission close.
