@@ -62,6 +62,7 @@ Rules:
 - Write the full report to the file the brief names (or a scratchpad file; with a Bash heredoc if you have no Write tool, which a read-only role may still do) and reply with its path plus at most 15 lines.
 - Report your plan as 3-8 steps with `mcp__savvy-progress__step` (`total`, `done: 0`) and update it as each step finishes.
 - If the same error comes back three times, stop and report what you tried.
+- Stop only processes you started, by PID (`kill <pid>`); never `pkill` or `killall` by name or pattern, since other sessions on the machine run the same tools.
 - End the report with "Next time:" and one line on what would have made this job faster (a missing fact, tool or access).
 <builders and verifiers:>
 - Work in your own git worktree, never in the shared checkout, and verify through the repo's own scripts. Verifiers: make it detached on the PR head in your scratchpad (`git worktree add --detach <dir> <sha>`) and remove it (`git worktree remove --force <dir>`) before you reply.
