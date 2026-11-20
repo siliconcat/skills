@@ -21,6 +21,16 @@ while IFS= read -r p; do
 done < <(grep -oE '(~|\.{0,2})?/?[A-Za-z0-9._@-]+(/[A-Za-z0-9._@-]+)+\.[A-Za-z0-9]+' <<< "$msg" || true)
 [[ -n $found ]] || block "Write your full report to a file (the path your brief names, or your scratchpad), then reply with its path and a summary of at most 15 lines."
 
+# director/ lives in the main checkout; a report written inside a linked worktree never reaches it.
+gd=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null || true)
+cd_=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+if [[ -n $report && -n $gd && $gd != "$cd_" ]]; then
+  main=$(cd "$cd_/.." && pwd -P); top=$(git rev-parse --show-toplevel)
+  abs=$(cd "$(dirname "$report")" && pwd -P)/$(basename "$report")
+  rel=director/reports/${abs##*/director/reports/}
+  [[ $abs == "$top"/* && ! -f $main/$rel ]] && block "You are in a linked worktree, and the director reads reports from the main checkout. Write the report to $main/$rel (or move it there), then reply with that path and a summary of at most 15 lines."
+fi
+
 n=$(printf '%s\n' "$msg" | wc -l | tr -d ' ')
 if [[ $n -gt 15 ]]; then
   [[ -n $report ]] && block "Your reply is $n lines. The full report is in $report; reply with its path and a summary of at most 15 lines."

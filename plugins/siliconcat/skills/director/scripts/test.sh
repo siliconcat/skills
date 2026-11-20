@@ -150,6 +150,16 @@ mkdir -p dags; echo x > dags/a_dag.py
 out=$(rc "$(printf 'line %s\n' $(seq 1 20); echo 'deleted dags/a_dag.py'; echo director/reports/R-0001-builder.md)")
 grep -q 'in director/reports/R-0001-builder.md' <<< "$out" || fail "report-check named a source file as the report: $out"
 rc "$(printf 'line %s\n' $(seq 1 20); echo 'deleted dags/a_dag.py')" | grep -q 'a_dag.py' && fail "report-check called a source file the report"
+# report-check in a linked worktree: the report must be in the main checkout
+git init -q wtmain && git -C wtmain -c user.name=t -c user.email=t@t commit -q --allow-empty -m i && git -C wtmain worktree add -q "$T/wtlinked" -b wt
+WT=$(cd wtlinked && pwd -P); MAIN=$(cd wtmain && pwd -P)
+mkdir -p wtlinked/director/reports; echo r > wtlinked/director/reports/X.md
+wtrc() { jq -n --arg m "$1" --arg c "$WT" '{last_assistant_message: $m, cwd: $c}' | "$HERE/report-check"; }
+out=$(wtrc 'Report: director/reports/X.md')
+grep -q "$MAIN/director/reports/X.md" <<< "$out" || fail "report-check let a worktree-only report through: $out"
+mkdir -p wtmain/director/reports; echo r > wtmain/director/reports/X.md
+[[ -z $(wtrc 'Report: director/reports/X.md') ]] || fail "report-check blocked a report present in the main checkout"
+[[ -z $(wtrc "Report: $MAIN/director/reports/X.md") ]] || fail "report-check blocked an absolute main-checkout path"
 [[ -z $(rc 'Done, all good.' true) ]] || fail "report-check blocked twice in a row"
 [[ -z $(echo '{}' | "$HERE/report-check") ]] || fail "report-check blocked on missing input"
 
