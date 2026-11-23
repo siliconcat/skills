@@ -152,7 +152,19 @@ has "$of" 'owner: sess-aaaaaaaa-1'
 [[ $(CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req open | grep "^$oid" | grep -c 'other:sess-aaa') == 1 ]] || fail "open did not mark another session's request as other"
 [[ $(req check "$oid" | head -1 | grep -c 'other:sess-aaa') == 1 ]] || fail "check does not show the owner"
 req adopt "$oid" 2>/dev/null && fail "adopt worked with no session id"
-out=$(CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req adopt "$oid") || fail "adopt failed"
+# another session's request is refused, with the owner named, unless forced; status behaves the same way
+out=$(CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req adopt "$oid" 2>&1) && fail "adopt took another session's request without --force"
+grep -q "belongs to session sess-aaa" <<< "$out" && grep -q "user's word" <<< "$out" || fail "adopt refusal: $out"
+has "$of" 'owner: sess-aaaaaaaa-1'
+out=$(CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req status "$oid" in-flight 2>&1) && fail "status changed another session's request without --force"
+grep -q "belongs to session sess-aaa" <<< "$out" || fail "status refusal: $out"
+has "$of" 'status: open'
+req status "$oid" in-flight 2>/dev/null && fail "status changed an owned request with no session id"
+CLAUDE_CODE_SESSION_ID=sess-aaaaaaaa-1 req status "$oid" in-flight > /dev/null || fail "status refused the owner"
+has "$of" 'status: in-flight'
+CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req status "$oid" open --force > /dev/null || fail "status --force refused"
+has "$of" 'status: open'
+out=$(CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req adopt "$oid" --force) || fail "adopt --force failed"
 grep -q "adopted (was sess-aaaaaaaa-1)" <<< "$out" || fail "adopt output: $out"
 has "$of" 'owner: sess-bbbbbbbb-2'
 [[ $(grep -c '^owner:' "$of") == 1 ]] || fail "adopt duplicated the owner line"
@@ -160,8 +172,13 @@ has "$of" 'owner: sess-bbbbbbbb-2'
 perl -ni -e 'print unless /^owner:/' "$of"
 out=$(CLAUDE_CODE_SESSION_ID=sess-cccccccc-3 req adopt "$oid"); grep -q "was unowned" <<< "$out" || fail "adopt of an old request: $out"
 has "$of" 'owner: sess-cccccccc-3'
+# an unowned request: status and adopt need no --force
+uid=$(echo "old" | req new); of2=director/requests/open/$uid.md
+CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req status "$uid" in-flight > /dev/null || fail "status refused an unowned request"
+CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req adopt "$uid" > /dev/null || fail "adopt refused an unowned request"
+req status "$uid" dropped --force "test" > /dev/null
 awk '/^## Receipts$/{r=1} END{exit !r}' "$of" || fail "adopt damaged the request"
-req status "$oid" dropped "test" > /dev/null
+CLAUDE_CODE_SESSION_ID=sess-cccccccc-3 req status "$oid" dropped "test" > /dev/null
 CLAUDE_CODE_SESSION_ID=sess-dddddddd-4 req adopt "$oid" 2>/dev/null && fail "adopt took over a closed request"
 CLAUDE_CODE_SESSION_ID=sess-dddddddd-4 req adopt R-9999 2>/dev/null && fail "adopt took a missing request"
 rid=$(echo "retro" | req new --retro --mission m9); has "director/requests/open/$rid.md" 'kind: retro'; has "director/requests/open/$rid.md" 'mission: m9'

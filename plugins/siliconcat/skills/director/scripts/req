@@ -11,7 +11,7 @@ req init                          create director/requests/{open,closed}, exclud
 req new [--mission NAME] [--retro]
                                   exact request text on stdin; prints the new id. Records this session as owner
                                   (CLAUDE_CODE_SESSION_ID); --retro marks a retro request, which director-retro --since-last reads
-req adopt ID                      make this session the owner of an open request
+req adopt ID [--force]            make this session the owner of an open request; --force to take another session's
 req add ID                        addendum text on stdin, appended as said
 req status ID STATUS [--force] [OUTCOME]
                                   open|in-flight|blocked|done|dropped; done/dropped move to closed/,
@@ -157,11 +157,19 @@ cmd_add() {
   echo "${1} addendum recorded"
 }
 
+# refuse another session's request (owner set, not this session) unless forced; an unowned one is anyone's
+guard_owner() {
+  local f=$1 id=$2 o; o=$(get_front "$f" owner)
+  [[ -z $o || $o == "${CLAUDE_CODE_SESSION_ID:-}" ]] || die "$id belongs to session ${o:0:8}; taking it over is on the user's word: pass --force"
+}
+
 cmd_adopt() {
-  local id=${1:?id}
+  local id=${1:?id} force=0
+  [[ ${2:-} == --force ]] && force=1
   [[ -n ${CLAUDE_CODE_SESSION_ID:-} ]] || die "CLAUDE_CODE_SESSION_ID is unset: this session has no id to own $id with"
   local f; f=$(path_of "$id")
   [[ $f == "$REQ/open/$id.md" ]] || die "$id is closed"
+  [[ $force == 1 ]] || guard_owner "$f" "$id"
   local was; was=$(get_front "$f" owner)
   lock
   set_front "$f" owner "$CLAUDE_CODE_SESSION_ID"
@@ -174,6 +182,7 @@ cmd_status() {
   local outcome=${3:-}
   [[ " $STATUSES " == *" $st "* ]] || die "status must be one of: $STATUSES"
   local f; f=$(path_of "$id")
+  [[ $force == 1 ]] || guard_owner "$f" "$id"
   if [[ ($st == done || $st == dropped) && $force == 0 ]]; then
     local live; live=$(live_workers "$f")
     [[ -z $live ]] || die "$id still has live workers: $live. Shut them down, then: req worker $id --retire $live (or --force)"

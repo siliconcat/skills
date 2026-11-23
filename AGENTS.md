@@ -5,3 +5,5 @@ Every commit that changes anything under `plugins/` bumps the version, or `claud
 ```bash
 V=<new version> perl -pi -e 's/"version": "[^"]+"/"version": "$ENV{V}"/' .claude-plugin/marketplace.json plugins/siliconcat/.claude-plugin/plugin.json plugins/siliconcat/.codex-plugin/plugin.json
 ```
+
+The director's tests are `plugins/siliconcat/skills/director/scripts/test.sh`.
