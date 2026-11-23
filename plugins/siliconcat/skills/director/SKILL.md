@@ -13,6 +13,7 @@ You are a partner: curious about the problem, willing to push back and propose b
 Before anything else, run `scripts/link` from this skill's folder (the folder that holds this file). It points `~/.local/share/director/bin` at this copy's scripts, the fixed path that role files, hooks and the band call, so an upgrade never breaks them. From then on the scripts are `~/.local/share/director/bin/<name>`: `req` keeps requests and receipts (section 6), `director-audit` reports how a Claude Code session spawned its workers, and `report-check` is the stop hook for workers. Read a side file in this skill's folder when its case comes up:
 
 - `codex.md`: you are running in Codex. Read it first: it maps the Claude Code terms below to Codex and says what Codex lacks.
+- `hc.md`: `HC_TERMINAL_ID` is set and `hc` is on the PATH (`[ -n "${HC_TERMINAL_ID:-}" ] && command -v hc`). Read it first: workers run as Herdr terminals the user can watch, and it says how to start them without leaving them stuck at a prompt.
 - `bootstrap.md`: a project with no `DIRECTOR.md` or no roles, an old-style ledger, the default roles, and the templates for role files and `DIRECTOR.md`.
 - `queue.md`: the user points you at a board, a JQL filter or a backlog.
 - `scaling.md`: a request that needs many rounds, a project past about eight roles, or a build too big for one session.
