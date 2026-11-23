@@ -423,6 +423,8 @@ grep -qF 'an older session' <<< "$out" && fail "director-retro read a session ou
 # the current session is the default scope
 out=$(CLAUDE_CODE_SESSION_ID=D1 rt) || fail "default scope failed"; grep -qF 'director session D1' <<< "$out" || fail "default scope is not the current session"
 rt > /dev/null 2>&1 && fail "director-retro ran with no scope"
+out=$(rt --help); grep -qF -- '--since-last' <<< "$out" && grep -qF 'Usage: director-retro' <<< "$out" || fail "director-retro --help: $out"
+grep -q '^set -' <<< "$out" && fail "director-retro --help printed code"
 rt --session NOPE > /dev/null 2>&1 && fail "director-retro accepted a session with no transcript"
 # limits: messages cut, and the output says so
 out=$(rt --session D1 --msgs 1 --clip 12); grep -qF 'user messages (2), first 1:' <<< "$out" || fail "--msgs did not bound messages: $out"
