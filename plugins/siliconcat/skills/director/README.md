@@ -39,10 +39,12 @@ What it keeps in the project, all excluded from git through `.git/info/exclude`:
 
 Claude Code and Codex differ in what a role can carry; [codex.md](codex.md) lists what Codex lacks (per-role tool lists, turn caps, worktree isolation, the band) and what stands in for it.
 
+In a terminal of the Herdr app, workers run as Herdr terminals you can watch, started by `hc-worker`, which refuses a folder where the worker would wait at a trust prompt; [hc.md](hc.md) says what changes.
+
 Optional: with [savvy-progress](https://github.com/johnnyvizz/claude-kit) installed, Claude Code workers report their steps as a progress bar. Agent teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) should stay off: the director's workers are subagents.
 
-Needs `bash`, `git`, `jq` and `perl`; `gh` and a `~/.netrc` for Jira let `req check` read the live state of PRs, CI runs and tickets.
+Needs `bash`, `git`, `jq` and `perl`; with git older than 2.39, `req prune` can't tell a squash-merged worktree from an unpushed one and keeps it; `gh` and a `~/.netrc` for Jira let `req check` read the live state of PRs, CI runs and tickets.
 
 ## Develop
 
-From this folder: `scripts/test.sh` tests `req`, `report-check`, `issue-check`, `skill-check`, `director-audit` and `link`. The band is tested with the plugin: see its [README](../../README.md).
+From this folder: `scripts/test.sh` tests `req`, `report-check`, `issue-check`, `skill-check`, `director-audit`, `link` and `hc-worker`. The band is tested with the plugin: see its [README](../../README.md).

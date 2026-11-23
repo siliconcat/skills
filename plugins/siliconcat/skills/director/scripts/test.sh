@@ -254,7 +254,7 @@ grep -q 'pruned 1 agent worktrees, kept 3' <<< "$out" || fail "prune summary: $o
 # squash-merged worktrees, and worktrees in other repos listed in director/repos
 cd "$T"; N=$(mktemp -d); trap 'rm -rf "${T:?}" "${N:?}"' EXIT; mkdir -p "$N/director/requests/open"; touch "$N/DIRECTOR.md"; cd "$N"
 slug="${N//\//-}"
-R=$T/other; git init -q --bare "$R-origin.git"; git init -q "$R"; cd "$R"
+R=$T/other; git init -q --bare "$R-origin.git"; git init -q "$R"; git -C "$R" symbolic-ref HEAD refs/heads/main; cd "$R"
 echo a > a; echo b > b; g add a b; g commit -q -m base; git remote add origin "$R-origin.git"; git push -q origin HEAD:main 2>/dev/null; git fetch -q origin
 git remote set-head origin main >/dev/null
 printf '%s\n' '# comment' '' "$R" > "$N/director/repos"
@@ -311,5 +311,20 @@ DIRECTOR_BIN=$B "$HERE/link" > /dev/null || fail "link failed"
 DIRECTOR_BIN=$B "$HERE/link" > /dev/null || fail "link not idempotent"
 rm "$B" && mkdir -p "$B"
 DIRECTOR_BIN=$B "$HERE/link" > /dev/null 2>&1 && fail "link replaced a real folder"
+
+# hc-worker: refuses outside Herdr, without a role file, or in an untrusted folder; else runs hc
+H=$T/hc; mkdir -p "$H/bin" "$H/cfg" "$H/proj/sub/.claude/agents" "$H/other/.claude/agents"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/args"\n' "$H" > "$H/bin/hc"; chmod +x "$H/bin/hc"
+touch "$H/proj/sub/.claude/agents/builder.md" "$H/other/.claude/agents/builder.md"
+jq -n --arg p "$H/proj" '{projects: {($p): {hasTrustDialogAccepted: true}}}' > "$H/cfg/.claude.json"
+hcw() { local d=$1; shift; (cd "$d" && PATH=$H/bin:$PATH CLAUDE_CONFIG_DIR=$H/cfg "$HERE/hc-worker" "$@"); }
+echo brief | HC_TERMINAL_ID= hcw "$H/proj/sub" b builder sonnet medium 2>/dev/null && fail "hc-worker ran outside Herdr"
+export HC_TERMINAL_ID=t1
+echo brief | hcw "$H/proj/sub" b verifier sonnet medium 2>/dev/null && fail "hc-worker ran without a role file"
+echo brief | hcw "$H/other" b builder sonnet medium 2>/dev/null && fail "hc-worker ran in an untrusted folder"
+printf 'the brief\nline 2' | hcw "$H/proj/sub" builder-x builder sonnet high -- --permission-mode auto || fail "hc-worker refused a trusted subfolder"
+has "$H/args" 'builder-x'; has "$H/args" 'director.role=builder'; has "$H/args" '--permission-mode'
+[[ $(tail -2 "$H/args") == $'the brief\nline 2' ]] || fail "brief not passed last: $(cat "$H/args")"
+unset HC_TERMINAL_ID
 
 echo "all tests passed"
