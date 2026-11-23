@@ -254,7 +254,7 @@ grep -q 'pruned 1 agent worktrees, kept 3' <<< "$out" || fail "prune summary: $o
 # squash-merged worktrees, and worktrees in other repos listed in director/repos
 cd "$T"; N=$(mktemp -d); trap 'rm -rf "${T:?}" "${N:?}"' EXIT; mkdir -p "$N/director/requests/open"; touch "$N/DIRECTOR.md"; cd "$N"
 slug="${N//\//-}"
-R=$T/other; git init -q --bare "$R-origin.git"; git init -q "$R"; cd "$R"
+R=$T/other; git init -q --bare "$R-origin.git"; git init -q "$R"; git -C "$R" symbolic-ref HEAD refs/heads/main; cd "$R"
 echo a > a; echo b > b; g add a b; g commit -q -m base; git remote add origin "$R-origin.git"; git push -q origin HEAD:main 2>/dev/null; git fetch -q origin
 git remote set-head origin main >/dev/null
 printf '%s\n' '# comment' '' "$R" > "$N/director/repos"

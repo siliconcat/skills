@@ -43,7 +43,7 @@ In a terminal of the Herdr app, workers run as Herdr terminals you can watch, st
 
 Optional: with [savvy-progress](https://github.com/johnnyvizz/claude-kit) installed, Claude Code workers report their steps as a progress bar. Agent teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) should stay off: the director's workers are subagents.
 
-Needs `bash`, `git`, `jq` and `perl`; `gh` and a `~/.netrc` for Jira let `req check` read the live state of PRs, CI runs and tickets.
+Needs `bash`, `git`, `jq` and `perl`; with git older than 2.39, `req prune` can't tell a squash-merged worktree from an unpushed one and keeps it; `gh` and a `~/.netrc` for Jira let `req check` read the live state of PRs, CI runs and tickets.
 
 ## Develop
 
