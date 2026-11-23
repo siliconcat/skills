@@ -10,6 +10,10 @@ Read this first when `HC_TERMINAL_ID` is set and `hc` is on the PATH: this sessi
 
 Write the brief to a file and pipe it in (`hc-worker builder-nat-keepalive builder sonnet medium < brief.md`), so quotes in it survive.
 
+### Roles from another repo
+
+A job in another repo may have a better role there than any of yours: list that repo's `.claude/agents/` before you staff it. To use one, add `--repo <dir>` (`hc-worker --repo ../nerea builder-infra-dns infra-builder sonnet medium < brief.md`): the worker starts in that repo with its role, `CLAUDE.md` and settings, which a subagent can't have. Same name, different role: a `builder` there is that repo's builder, not yours. The brief names the report as an absolute path under this project's `director/reports/`, and `hc-worker` refuses a brief that doesn't, since a relative path would land in the other repo. The requests stay here: run `req` from this project only.
+
 ## Not getting blocked
 
 A worker that stops at a prompt waits for the user, and only the user may answer a trust, permission or approval prompt. Prevent them:

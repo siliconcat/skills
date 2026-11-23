@@ -314,7 +314,7 @@ DIRECTOR_BIN=$B "$HERE/link" > /dev/null 2>&1 && fail "link replaced a real fold
 
 # hc-worker: refuses outside Herdr, without a role file, or in an untrusted folder; else runs hc
 H=$T/hc; mkdir -p "$H/bin" "$H/cfg" "$H/proj/sub/.claude/agents" "$H/other/.claude/agents"
-printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/args"\n' "$H" > "$H/bin/hc"; chmod +x "$H/bin/hc"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/args"; pwd -P > "%s/cwd"\n' "$H" "$H" > "$H/bin/hc"; chmod +x "$H/bin/hc"
 touch "$H/proj/sub/.claude/agents/builder.md" "$H/other/.claude/agents/builder.md"
 jq -n --arg p "$H/proj" '{projects: {($p): {hasTrustDialogAccepted: true}}}' > "$H/cfg/.claude.json"
 hcw() { local d=$1; shift; (cd "$d" && PATH=$H/bin:$PATH CLAUDE_CONFIG_DIR=$H/cfg "$HERE/hc-worker" "$@"); }
@@ -325,6 +325,15 @@ echo brief | hcw "$H/other" b builder sonnet medium 2>/dev/null && fail "hc-work
 printf 'the brief\nline 2' | hcw "$H/proj/sub" builder-x builder sonnet high -- --permission-mode auto || fail "hc-worker refused a trusted subfolder"
 has "$H/args" 'builder-x'; has "$H/args" 'director.role=builder'; has "$H/args" '--permission-mode'
 [[ $(tail -2 "$H/args") == $'the brief\nline 2' ]] || fail "brief not passed last: $(cat "$H/args")"
+# --repo: the worker starts in the other repo with its role; the report path must point home
+mkdir -p "$H/proj/home" "$H/proj/nerea/.claude/agents"; touch "$H/proj/nerea/.claude/agents/infra-builder.md"
+HOMEP=$(cd "$H/proj/home" && pwd -P)
+echo "Report: director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo ../nerea ib infra-builder sonnet medium 2>/dev/null && fail "hc-worker --repo took a relative report path"
+echo "Report: $HOMEP/director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo ../nerea infra-builder-x infra-builder sonnet medium || fail "hc-worker --repo refused a good brief"
+[[ $(cat "$H/cwd") == "$(cd "$H/proj/nerea" && pwd -P)" ]] || fail "hc-worker --repo ran in $(cat "$H/cwd")"
+has "$H/args" 'infra-builder-x'
+echo "Report: $HOMEP/director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo ../missing ib infra-builder sonnet medium 2>/dev/null && fail "hc-worker --repo ran in a missing folder"
+echo "Report: $HOMEP/director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo "$H/other" ib builder sonnet medium 2>/dev/null && fail "hc-worker --repo ran in an untrusted folder"
 unset HC_TERMINAL_ID
 
 echo "all tests passed"
