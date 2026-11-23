@@ -8,7 +8,10 @@ STATUSES="open in-flight blocked done dropped"
 usage() {
   cat <<'EOF'
 req init                          create director/requests/{open,closed}, exclude director files from git
-req new [--mission NAME]          exact request text on stdin; prints the new id
+req new [--mission NAME] [--retro]
+                                  exact request text on stdin; prints the new id. Records this session as owner
+                                  (CLAUDE_CODE_SESSION_ID); --retro marks a retro request, which director-retro --since-last reads
+req adopt ID                      make this session the owner of an open request
 req add ID                        addendum text on stdin, appended as said
 req status ID STATUS [--force] [OUTCOME]
                                   open|in-flight|blocked|done|dropped; done/dropped move to closed/,
@@ -21,7 +24,7 @@ req asks                          open asks of open requests: id, since (UTC), t
 req rework ID WORKER WHY          record a round of rework: a failed verify, a user correction, a reopen
 req stats                         closed requests without rework, and rework rounds by role
 req prune                         remove worktrees (own repo agent-*, repos in director/repos under this project's scratchpad) that are clean, pushed or squash-merged, untouched for an hour
-req open                          one line per open request
+req open                          one line per open request: mine, other:<session> or unowned (made before owners)
 req show ID                       print a request
 req check [ID...]                 live state of the receipts of open (or given) requests
 req lint                          ledger size, role model, tools and emoji, git exclusion, stale requests
@@ -107,8 +110,14 @@ cmd_init() {
 }
 
 cmd_new() {
-  local mission=none
-  [[ ${1:-} == --mission ]] && { mission=${2:?--mission needs a name}; shift 2; }
+  local mission=none kind=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --mission) mission=${2:?--mission needs a name}; shift 2 ;;
+      --retro) kind="kind: retro"; shift ;;
+      *) die "unknown argument $1 (flags: --mission NAME, --retro)" ;;
+    esac
+  done
   local text; text=$(read_stdin)
   [[ -d $REQ/open ]] || die "no store at $REQ; run 'req init' first"
   lock
@@ -121,7 +130,9 @@ cmd_new() {
 id: $id
 date: $TODAY
 status: open
-mission: $mission
+mission: $mission${kind:+
+$kind}${CLAUDE_CODE_SESSION_ID:+
+owner: $CLAUDE_CODE_SESSION_ID}
 workers: []
 retired: []
 ---
@@ -144,6 +155,17 @@ cmd_add() {
   lock
   append_to_section "$f" Addenda "- $TODAY: $(printf '%s' "$text" | sed '2,$s/^/  /')"
   echo "${1} addendum recorded"
+}
+
+cmd_adopt() {
+  local id=${1:?id}
+  [[ -n ${CLAUDE_CODE_SESSION_ID:-} ]] || die "CLAUDE_CODE_SESSION_ID is unset: this session has no id to own $id with"
+  local f; f=$(path_of "$id")
+  [[ $f == "$REQ/open/$id.md" ]] || die "$id is closed"
+  local was; was=$(get_front "$f" owner)
+  lock
+  set_front "$f" owner "$CLAUDE_CODE_SESSION_ID"
+  echo "$id adopted (was ${was:-unowned})"
 }
 
 cmd_status() {
@@ -273,10 +295,18 @@ cmd_stats() {
     }' "${files[@]}"
 }
 
+# whose request it is: this session's, another's, or nobody's (made before owners were recorded: adoptable)
+owner_mark() {
+  local o; o=$(get_front "$1" owner)
+  if [[ -z $o ]]; then echo unowned
+  elif [[ $o == "${CLAUDE_CODE_SESSION_ID:-}" ]]; then echo mine
+  else echo "other:${o:0:8}"; fi
+}
+
 summary_line() {
   local f=$1 first
   first=$(awk '/^## Request$/{getline; print; exit}' "$f" | cut -c1-80)
-  printf '%s  %-9s  %s  %-14s  %s\n' "$(get_front "$f" id)" "$(get_front "$f" status)" "$(get_front "$f" date)" "$(get_front "$f" mission)" "$first"
+  printf '%s  %-9s  %s  %-14s  %-14s  %s\n' "$(get_front "$f" id)" "$(get_front "$f" status)" "$(get_front "$f" date)" "$(get_front "$f" mission)" "$(owner_mark "$f")" "$first"
 }
 
 # pushed = on a remote branch; or landed by squash: the files it changed match origin's default branch, or its whole
@@ -431,6 +461,7 @@ case $cmd in
   init) cmd_init ;;
   new) cmd_new "$@" ;;
   add) cmd_add "$@" ;;
+  adopt) cmd_adopt "$@" ;;
   status) cmd_status "$@" ;;
   worker) cmd_worker "$@" ;;
   receipt) cmd_receipt "$@" ;;

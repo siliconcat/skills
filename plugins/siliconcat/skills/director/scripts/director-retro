@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# Bounded digest of director sessions and their workers, the evidence for a retro (retro.md).
+# It prints counts and short excerpts, never whole transcripts; open a transcript only where it points.
+#
+# Usage: director-retro [scope] [limits]
+# Scope (default: the current session, $CLAUDE_CODE_SESSION_ID):
+#   --session ID      a director session by id; repeat for several
+#   --mission NAME    the sessions that ran the requests of a mission
+#   --theme TEXT      the same for every request whose text matches TEXT (grep -E, ignoring case)
+#   --since-last      every session and request since the last closed retro request (`req new --retro`)
+#   --since DATE      the same since DATE (YYYY-MM-DD or YYYY-MM-DDTHH:MM, local time)
+# Limits:
+#   --msgs N          the user's messages shown per director session (default 30; per worker 5)
+#   --clip N          characters kept of a message or error line (default 240)
+#   --max-sessions N  director sessions digested, newest first (default 12; at most 15 workers each)
+#
+# Per session: the user's messages, tool calls by name, failed tool calls (first error line), permission
+# or auto-mode denials, Stop hook blocks with their reasons, turns and wall time. Workers are the
+# session's subagents and the Herdr workers listed in director/workers.tsv (hc-worker writes it; the
+# transcript is found by session id, in any project folder). Then the requests in scope with rework,
+# threads two requests share, the `Next time:` lines of their reports, and `req stats`.
+#
+# A request is in scope when a session owns it (`owner:`), runs `req <verb> R-NNNN` on it or names its
+# report; a mission or theme finds sessions the same way, so requests from before owners work too.
+# shortcut: `req new` output is not read, so a request only made and never touched again is missed.
+set -euo pipefail
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$HERE/transcripts.sh"
+
+die() { echo "director-retro: $*" >&2; exit 1; }
+sessions=() mission="" theme="" since="" since_last=0 msgs=30 clip=240 maxsess=12 maxworkers=15
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --session) sessions+=("${2:?--session needs an id}"); shift 2 ;;
+    --mission) mission=${2:?--mission needs a name}; shift 2 ;;
+    --theme) theme=${2:?--theme needs text}; shift 2 ;;
+    --since-last) since_last=1; shift ;;
+    --since) since=${2:?--since needs a date}; shift 2 ;;
+    --msgs) msgs=${2:?}; shift 2 ;;
+    --clip) clip=${2:?}; shift 2 ;;
+    --max-sessions) maxsess=${2:?}; shift 2 ;;
+    -h|--help) sed -n '2,/^set -/{/^set -/d;s/^# \{0,1\}//;p}' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) die "unknown argument $1 (see --help)" ;;
+  esac
+done
+
+find_root() {
+  local d=$PWD
+  while [[ $d != / ]]; do
+    [[ -f $d/DIRECTOR.md || -d $d/director/requests ]] && { echo "$d"; return; }
+    d=$(dirname "$d")
+  done
+  echo "$PWD"
+}
+ROOT=${DIRECTOR_ROOT:-$(find_root)}
+REQ=$ROOT/director/requests
+PDIR=$(project_dir "$ROOT")
+get_front() { awk -v k="$2" '/^---$/{n++; next} n==1 && index($0, k": ")==1 {print substr($0, length(k)+3); exit}' "$1"; }
+req_file() { local f; for f in "$REQ/open/$1.md" "$REQ/closed/$1.md"; do [[ -f $f ]] && { echo "$f"; return; }; done; return 1; }
+req_files() { ls -- "$REQ"/open/R-*.md "$REQ"/closed/R-*.md 2>/dev/null || true; }
+
+# request ids a session touches: `req <verb> R-NNNN` in its Bash commands, report paths in commands and briefs
+transcript_reqs() {
+  jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | (.input.command // .input.prompt // empty)' "$1" 2>/dev/null \
+    | grep -oE 'req (add|status|worker|receipt|rework|ask|adopt) R-[0-9]{4}|director/reports/R-[0-9]{4}' | grep -oE 'R-[0-9]{4}' | sort -u || true
+}
+# director sessions of the home project that touch a request, and the one that owns it
+sessions_of_req() {
+  local id=$1 f
+  get_front "$(req_file "$id")" owner
+  grep -lE "req (add|status|worker|receipt|rework|ask|adopt) $id|director/reports/$id-" "$PDIR"/*.jsonl 2>/dev/null | while IFS= read -r f; do basename "$f" .jsonl; done || true
+}
+
+reqs=() dirs=() desc=""
+add_req() { local x; for x in ${reqs[@]+"${reqs[@]}"}; do [[ $x == "$1" ]] && return; done; reqs+=("$1"); }
+add_dir() { local x; for x in ${dirs[@]+"${dirs[@]}"}; do [[ $x == "$1" ]] && return; done; dirs+=("$1"); }
+
+if [[ -n $mission || -n $theme ]]; then
+  while IFS= read -r f; do
+    if [[ -n $mission && $(get_front "$f" mission) == "$mission" ]] || { [[ -n $theme ]] && grep -qiE -- "$theme" "$f"; }; then add_req "$(basename "$f" .md)"; fi
+  done < <(req_files)
+  [[ ${#reqs[@]} -gt 0 ]] || die "no request matches ${mission:+mission $mission}${theme:+theme $theme}"
+  for id in "${reqs[@]}"; do while IFS= read -r s; do [[ -n $s ]] && add_dir "$s"; done < <(sessions_of_req "$id"); done
+  desc="${mission:+mission $mission}${theme:+theme $theme}: ${#reqs[@]} requests"
+elif [[ $since_last == 1 || -n $since ]]; then
+  if [[ $since_last == 1 ]]; then
+    last=""
+    for f in "$REQ"/closed/R-*.md; do [[ -f $f && $(get_front "$f" kind) == retro ]] && { [[ -z $last || $f -nt $last ]] && last=$f; }; done
+    [[ -n $last ]] || die "no closed retro request: pass --since DATE (a retro is recorded with 'req new --retro')"
+    # shortcut: the close time is the file's modification time; a later edit of the closed request moves it
+    since=$(date -r "$last" +%Y-%m-%dT%H:%M:%S)
+    desc="since $since (retro $(basename "$last" .md) closed)"
+  else desc="since $since"; fi
+  while IFS= read -r f; do add_dir "$(basename "$f" .jsonl)"; done < <(find "$PDIR" -maxdepth 1 -name '*.jsonl' -newermt "$since" -print 2>/dev/null | xargs ls -t 2>/dev/null || true)
+  while IFS= read -r f; do add_req "$(basename "$f" .md)"; done < <(find "$REQ/open" "$REQ/closed" -name 'R-*.md' -newermt "$since" 2>/dev/null | sort)
+else
+  [[ ${#sessions[@]} -gt 0 ]] || { [[ -n ${CLAUDE_CODE_SESSION_ID:-} ]] && sessions=("$CLAUDE_CODE_SESSION_ID"); }
+  [[ ${#sessions[@]} -gt 0 ]] || die "no scope: CLAUDE_CODE_SESSION_ID is unset; pass --session, --mission, --theme, --since-last or --since"
+  for s in "${sessions[@]}"; do
+    add_dir "$s"
+    sf=$(session_file "$s") || die "no transcript for session $s"
+    while IFS= read -r id; do req_file "$id" >/dev/null && add_req "$id"; done < <(transcript_reqs "$sf")
+  done
+  for f in $(req_files); do
+    for s in "${sessions[@]}"; do [[ $(get_front "$f" owner) == "$s" ]] && add_req "$(basename "$f" .md)"; done
+  done
+  desc="session ${sessions[*]}"
+fi
+
+secs() { local s=$1; if [[ $s -ge 3600 ]]; then echo "$((s/3600))h$((s%3600/60))m"; else echo "$((s/60))m$((s%60))s"; fi; }
+
+# digest FILE LABEL MAXMSGS: one session transcript, in one jq pass that keeps only counters and short excerpts
+digest() {
+  echo "$2"
+  [[ -f $1 ]] || { echo "  transcript not found"; return; }
+  jq -n -r --argjson maxmsg "$3" --argjson clip "$clip" --argjson maxfail 8 --argjson maxden 6 --argjson maxtools 12 --argjson maxhooks 5 '
+    def clipn($n): gsub("\\s+"; " ") | if length > $n then .[0:$n] + "…" else . end;
+    def txt: if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join(" ")) end;
+    def lines: split("\n") | map(select(test("\\S")));
+    def errline: lines as $l | if ($l[0] // "") | test("^Exit code") then ($l[0:2] | join(" | ")) else ($l[0] // "") end;
+    def ts: sub("\\.[0-9]+Z$"; "Z") | fromdate;
+    def dur: if . >= 3600 then "\(. / 3600 | floor)h\(. % 3600 / 60 | floor)m" else "\(. / 60 | floor)m\(. % 60)s" end;
+    reduce inputs as $r ({tools: {}, use: {}, nmsg: 0, msgs: [], nfail: 0, fails: [], nden: 0, den: [], nhook: 0, hooks: {}, turns: 0, active: 0, asst: 0, first: null, last: null};
+      (if ($r.timestamp // null) != null then .first //= $r.timestamp | .last = $r.timestamp else . end)
+      | if $r.type == "assistant" then
+          .asst += 1
+          | reduce ($r.message.content[]? | select(.type == "tool_use")) as $t (.; .tools[$t.name] += 1 | .use[$t.id] = $t.name)
+        elif $r.type == "system" and $r.subtype == "turn_duration" then .turns += 1 | .active += ($r.durationMs // 0)
+        elif $r.type == "user" then
+          ($r.message.content) as $c
+          | if ($c | type) == "array" and ([$c[] | select(.type == "tool_result")] | length) > 0 then
+              reduce ($c[] | select(.type == "tool_result")) as $tr (.;
+                (.use[$tr.tool_use_id] // "?") as $tool
+                | ($tr.content | txt) as $body
+                | if ($r.permissionDecision.decision // "") == "reject" or ($r.toolDenialKind // null) != null then
+                    .nden += 1
+                    | if (.den | length) < $maxden then .den += [$tool + ": " + ($body | lines | .[0] // "" | sub("^Permission for this action was denied by the Claude Code auto mode classifier\\. "; "auto mode: ") | sub(" If you have other tasks.*$"; "") | clipn($clip))] else . end
+                  elif $tr.is_error == true then
+                    .nfail += 1
+                    | if (.fails | length) < $maxfail then .fails += [$tool + ": " + ($body | errline | clipn($clip))] else . end
+                  else . end)
+            elif ($r.isMeta // false) then
+              ($c | txt) as $t
+              | if ($t | startswith("Stop hook feedback:")) then .nhook += 1 | .hooks[($t | ltrimstr("Stop hook feedback:") | lines | .[0] // "" | gsub("[0-9]+"; "N") | clipn(110))] += 1 else . end
+            elif (($r.origin.kind // "human") == "human") then
+              ($c | txt) as $t
+              | if ($t | test("^\\s*(<|$)")) then . else .nmsg += 1 | if (.msgs | length) < $maxmsg then .msgs += [$t | clipn($clip)] else . end end
+            else . end
+        else . end)
+    | . as $s
+    | ((if $s.first != null then (($s.last | ts) - ($s.first | ts)) else 0 end)) as $wall
+    | "  \(if $s.turns > 0 then "turns \($s.turns), active \($s.active / 1000 | floor | dur)" else "assistant messages \($s.asst)" end), wall \($wall | dur)",
+      "  user messages (\($s.nmsg))" + (if $s.nmsg > ($s.msgs | length) then ", first \($s.msgs | length)" else "" end) + ":",
+      ($s.msgs[] | "    - " + .),
+      "  tools: " + (($s.tools | to_entries | sort_by(-.value)) as $e | ($e[0:$maxtools] | map("\(.key)×\(.value)") | join(" ")) + (if ($e | length) > $maxtools then " +\($e | length - $maxtools) more" else "" end)),
+      (if $s.nfail > 0 then "  failed tool calls (\($s.nfail))" + (if $s.nfail > ($s.fails | length) then ", first \($s.fails | length)" else "" end) + ":", ($s.fails[] | "    - " + .) else empty end),
+      (if $s.nden > 0 then "  denied (\($s.nden))" + (if $s.nden > ($s.den | length) then ", first \($s.den | length)" else "" end) + ":", ($s.den[] | "    - " + .) else empty end),
+      (if $s.nhook > 0 then "  stop hook blocks (\($s.nhook)):", (($s.hooks | to_entries | sort_by(-.value))[0:$maxhooks][] | "    - \(.key) ×\(.value)") else empty end)
+  ' "$1" 2>&1 || echo "  (could not read the transcript)"
+}
+
+echo "# director-retro: $desc"
+echo "# user messages shown: ${msgs} per director session, 5 per worker; lines cut at ${clip} characters"
+echo
+
+if [[ ${#reqs[@]} -gt 0 ]]; then
+  echo "## requests in scope"
+  me=${CLAUDE_CODE_SESSION_ID:-}
+  for id in "${reqs[@]}"; do
+    f=$(req_file "$id") || continue
+    owner=$(get_front "$f" owner)
+    mark=${owner:0:8}; [[ -n $owner ]] || mark=unowned; [[ -n $owner && $owner == "$me" ]] && mark=mine
+    first=$(awk '/^## Request$/{getline; print; exit}' "$f" | cut -c1-80)
+    rw=$(grep -cE '^[0-9-]+: rework \(' "$f" || true)
+    printf '%s  %-9s  mission=%s  owner=%s  rework=%s  %s\n' "$id" "$(get_front "$f" status)" "$(get_front "$f" mission)" "$mark" "$rw" "$first"
+  done
+  # a ticket key or link in two requests: work that may have wanted a mission
+  threads=$(for f in $(req_files); do
+    id=$(basename "$f" .md)
+    grep -oE '[A-Z][A-Z0-9]+-[0-9]+|https?://[^ )>"]+' "$f" | grep -vE '^R-[0-9]{4}$|^(UTF|ISO|SHA|ES|PT|EN)-[0-9]+$' | sort -u | sed "s/\$/	$id/"
+  done | awk -F'\t' '{ n[$1]++; r[$1] = r[$1] (r[$1] ? ", " : "") $2 } END { for (k in n) if (n[k] > 1) print k "\t" r[k] }' | sort || true)
+  shared=""
+  while IFS=$'\t' read -r k rs; do
+    [[ -n $k ]] || continue
+    for id in "${reqs[@]}"; do [[ ", $rs," == *", $id,"* ]] && { shared+="  $k: $rs"$'\n'; break; }; done
+  done <<< "$threads"
+  [[ -z $shared ]] || { echo "shared threads (in two or more requests):"; printf '%s' "$shared" | head -10; }
+  echo
+fi
+
+n=0
+for s in ${dirs[@]+"${dirs[@]}"}; do
+  [[ $n -lt $maxsess ]] || { echo "(${#dirs[@]} director sessions in scope; $maxsess shown: --max-sessions)"; echo; break; }
+  n=$((n+1))
+  sf=$(session_file "$s") || { echo "## director session $s: no transcript"; continue; }
+  digest "$sf" "## director session $s ($(basename "$(dirname "$sf")"))" "$msgs"
+  w=0
+  while IFS= read -r af; do
+    [[ -n $af ]] || continue
+    w=$((w+1)); [[ $w -le $maxworkers ]] || continue
+    meta=${af%.jsonl}.meta.json
+    digest "$af" "### subagent $(jq -r '[.agentType, .description] | map(select(. != null)) | join(": ")' "$meta" 2>/dev/null || basename "$af" .jsonl)" 5
+  done < <(subagent_files "$sf")
+  if [[ -f $ROOT/director/workers.tsv ]]; then
+    while IFS=$'\t' read -r when name role cwd wsid term dsid; do
+      [[ $dsid == "$s" ]] || continue
+      w=$((w+1)); [[ $w -le $maxworkers ]] || continue
+      digest "$(session_file "$wsid" || echo /nonexistent)" "### herdr worker $name ($role, $term, started $when, in $cwd)" 5
+    done < "$ROOT/director/workers.tsv"
+  fi
+  [[ $w -le $maxworkers ]] || echo "($w workers; $maxworkers shown)"
+  echo
+done
+
+if [[ ${#reqs[@]} -gt 0 ]]; then
+  echo "## Next time: lines of the reports"
+  found=0
+  for id in "${reqs[@]}"; do
+    for f in "$ROOT"/director/reports/$id-*.md; do
+      [[ -f $f ]] || continue
+      line=$(grep -m1 '^Next time:' "$f" || true)
+      [[ -n $line ]] && { found=1; printf '%s %s\n' "$(basename "$f" .md)" "$(printf '%s' "$line" | cut -c1-$((clip+10)))"; }
+    done
+  done
+  [[ $found == 1 ]] || echo "(none)"
+  echo
+fi
+echo "## req stats (whole project)"
+DIRECTOR_ROOT=$ROOT "$HERE/req" stats

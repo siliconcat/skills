@@ -4,6 +4,8 @@
 # The brief comes on stdin. --repo starts the worker in another repo, with that repo's own role,
 # CLAUDE.md and settings. It refuses, with exit 2, anything that would leave the worker waiting
 # at a prompt only the user can answer, so the director spawns a subagent or asks the user instead.
+# Each worker is appended to director/workers.tsv in the home project, tab-separated: time (UTC), name,
+# role, cwd, worker session id, Herdr terminal, director session id (director-retro reads it).
 set -euo pipefail
 
 usage="usage: hc-worker [--repo <dir>] <name> <role> <model> <effort> [-- <claude args>...] < brief"
@@ -43,5 +45,11 @@ brief=$(cat)
 # A relative report path would land in the other repo, out of the director's sight.
 [[ -z $repo || $brief == *"$home/director/reports/"* || $brief == *"$home_l/director/reports/"* ]] ||
   refuse "with --repo, the brief must name the report as an absolute path under $home/director/reports/"
-exec hc run --bg --name "$name" --label "director.role=$role" \
-  claude --agent "$role" --model "$model" --effort "$effort" "$@" "$brief"
+# The worker's session id is chosen here, so director-retro can find its transcript later, in any project folder.
+sid=$(uuidgen | tr 'A-Z' 'a-z')
+out=$(hc run --bg --name "$name" --label "director.role=$role" \
+  claude --agent "$role" --model "$model" --effort "$effort" --session-id "$sid" "$@" "$brief") || { printf '%s\n' "$out" >&2; exit 1; }
+mkdir -p "$home/director"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$name" "$role" "$(pwd -P)" "$sid" \
+  "$(jq -r '.address // empty' <<< "$out" 2>/dev/null || true)" "${CLAUDE_CODE_SESSION_ID:-}" >> "$home/director/workers.tsv"
+printf '%s\n' "$out"

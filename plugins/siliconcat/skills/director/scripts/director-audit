@@ -3,12 +3,12 @@
 # Usage: director-audit [--previous | session.jsonl ...]
 #   default: latest session of the current directory; --previous: the one before it (run at session start)
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/transcripts.sh"
 
 if [[ $# -eq 0 || $1 == --previous ]]; then
   nth=1; [[ ${1:-} == --previous ]] && nth=2
-  dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(pwd | sed 's/[^A-Za-z0-9-]/-/g')
-  latest=$(ls -t -- "$dir"/*.jsonl 2>/dev/null | sed -n "${nth}p") || true
-  [[ -n $latest ]] || { echo "director-audit: no session #$nth in $dir" >&2; exit 1; }
+  latest=$(nth_session "$PWD" "$nth")
+  [[ -n $latest ]] || { echo "director-audit: no session #$nth in $(project_dir "$PWD")" >&2; exit 1; }
   set -- "$latest"
 fi
 
