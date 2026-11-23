@@ -10,6 +10,8 @@ Read this first when `HC_TERMINAL_ID` is set and `hc` is on the PATH: this sessi
 
 Write the brief to a file and pipe it in (`hc-worker builder-nat-keepalive builder sonnet medium < brief.md`), so quotes in it survive.
 
+`hc-worker` starts claude with a session id of its own and appends one line per worker to `director/workers.tsv` in this project (time, name, role, cwd, worker session id, Herdr terminal, this session's id), so `director-retro` finds the worker's transcript later, even for a `--repo` worker whose transcript sits in another project folder.
+
 ### Roles from another repo
 
 A job in another repo may have a better role there than any of yours: list that repo's `.claude/agents/` before you staff it. To use one, add `--repo <dir>` (`hc-worker --repo ../nerea builder-infra-dns infra-builder sonnet medium < brief.md`): the worker starts in that repo with its role, `CLAUDE.md` and settings, which a subagent can't have. Same name, different role: a `builder` there is that repo's builder, not yours. The brief names the report as an absolute path under this project's `director/reports/`, and `hc-worker` refuses a brief that doesn't, since a relative path would land in the other repo. The requests stay here: run `req` from this project only.
@@ -27,7 +29,7 @@ If a worker is blocked anyway, hc types a line into this session (`<hc>t13 probe
 
 ## While it runs
 
-- After spawning, run `hc wait --children any --timeout 3600` as a background command, so you are woken when a worker ends a turn, blocks, errors or exits; then `hc ls` says which one, and you start the next wait. Not `hc wait <name>`: it returns at the worker's startup idle, before it has read the brief. `hc ls` lists workers and their state (`working`, `blocked`, `done`); `ListAgents` doesn't show them.
+- After spawning, run `hc wait --children any --timeout 3600` as a background command, so you are woken when a worker ends a turn, blocks, errors or exits; then `hc ls` says which one, and you start the next wait. Not `hc wait <name>`: it returns at the worker's startup idle, before it has read the brief. `hc ls` lists workers and their state (`working`, `blocked`, `done`); `ListAgents` doesn't show them. It lists every live terminal, so other directors' workers show too: a worker is yours when its parent is your terminal (`$HC_TERMINAL_ID`), and a worker whose parent is another terminal belongs to another director. Never wait on, send to, kill or retire those.
 - The report arrives as a file: the role's `report-check` Stop hook holds the worker to a reply of at most 15 lines that names the report, as for subagents. Read the report; `hc read` is only for a worker that is blocked or stuck.
 - Reuse for the **same thread**: the worker is still alive with its context, so give it the next job with `hc send <name> "<brief>"` once it is `done`. The three-job limit and the cache note in section 4 still apply.
 - Workers spawn nobody, not even through `hc run`: a worker that needs help returns a staffing request.
@@ -38,5 +40,5 @@ If a worker is blocked anyway, hc types a line into this session (`<hc>t13 probe
 
 ## What else changes
 
-- **`director-audit`** reads this session's subagent transcripts, so it doesn't see Herdr workers: skip section 1 step 5 for them.
-- **Section 1 step 4**: a worker an open request lists as live is live if `hc ls` shows it, not `ListAgents`.
+- **`director-audit`** reads this session's subagent transcripts, so it doesn't see Herdr workers: skip section 1 step 5 for them. `director-retro` does read them, through `director/workers.tsv`.
+- **Section 1 step 4**: a worker an open request lists as live is live if `hc ls` shows it, not `ListAgents`; only workers of requests this session owns are retired.

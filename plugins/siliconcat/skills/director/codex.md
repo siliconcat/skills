@@ -56,5 +56,6 @@ Project hooks run only once the user trusts the project's `.codex/` layer: say s
 - **The band.** When `req asks` lists anything, start each status message with it ("Waiting on you: R-0005 · approve merging web-app#96"), so the user always sees what you need from them.
 - **Agent teams** and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`: ignore those lines.
 - **savvy-progress:** workers skip the progress-steps rule.
-- **`director-audit`** reads Claude Code transcripts: skip `SKILL.md` section 1 step 5, and its use at mission close.
+- **`director-audit` and `director-retro`** read Claude Code transcripts: skip `SKILL.md` section 1 step 5, and the session digest of `retro.md`; a Codex retro works from `req stats`, the requests and the reports' `Next time:` lines.
+- **Request owners** come from `CLAUDE_CODE_SESSION_ID`, which Codex doesn't set: requests it makes have no owner, and `req open` marks Claude Code's requests `other`. Skip the owner rules of `SKILL.md` section 1.
 - **`req lint`'s role checks and `req prune`** look at `.claude/agents/` and `.claude/worktrees/`: in Codex, check role files against the template yourself, and remove worktrees your workers left once their PRs are pushed.

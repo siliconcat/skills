@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Self-test for req and director-audit, in a throwaway git repo.
+# Self-test for req, director-audit, director-retro, the hooks and hc-worker, in a throwaway git repo.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+unset CLAUDE_CODE_SESSION_ID
 T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
 cd "$T"; git init -q .
 req() { "$HERE/req" "$@"; }
@@ -139,6 +140,33 @@ req status "$aid" dropped "test" > /dev/null
 grep -q "^asks test - \[ \] not an ask\$" "director/requests/closed/$aid.md" || fail "closing touched request text"
 
 [[ ! -d director/requests/.lock ]] || fail "lock left behind"
+
+# owners: req new records the session that made the request; req open says whose it is; req adopt takes one over
+oid=$(echo "no session" | req new); of=director/requests/open/$oid.md
+grep -q '^owner:' "$of" && fail "req new recorded an owner with no session id"
+[[ $(req open | grep "^$oid" | grep -c unowned) == 1 ]] || fail "open did not mark a request with no owner as unowned: $(req open)"
+oid=$(echo "mine" | CLAUDE_CODE_SESSION_ID=sess-aaaaaaaa-1 req new); of=director/requests/open/$oid.md
+has "$of" 'owner: sess-aaaaaaaa-1'
+[[ $(sed -n '2,8p' "$of" | grep -c '^---$') == 0 ]] || fail "owner line landed outside the front matter"
+[[ $(CLAUDE_CODE_SESSION_ID=sess-aaaaaaaa-1 req open | grep "^$oid" | grep -c ' mine ') == 1 ]] || fail "open did not mark the owner's request as mine"
+[[ $(CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req open | grep "^$oid" | grep -c 'other:sess-aaa') == 1 ]] || fail "open did not mark another session's request as other"
+[[ $(req check "$oid" | head -1 | grep -c 'other:sess-aaa') == 1 ]] || fail "check does not show the owner"
+req adopt "$oid" 2>/dev/null && fail "adopt worked with no session id"
+out=$(CLAUDE_CODE_SESSION_ID=sess-bbbbbbbb-2 req adopt "$oid") || fail "adopt failed"
+grep -q "adopted (was sess-aaaaaaaa-1)" <<< "$out" || fail "adopt output: $out"
+has "$of" 'owner: sess-bbbbbbbb-2'
+[[ $(grep -c '^owner:' "$of") == 1 ]] || fail "adopt duplicated the owner line"
+# a request made before owners existed is adoptable, and stays in its sections
+perl -ni -e 'print unless /^owner:/' "$of"
+out=$(CLAUDE_CODE_SESSION_ID=sess-cccccccc-3 req adopt "$oid"); grep -q "was unowned" <<< "$out" || fail "adopt of an old request: $out"
+has "$of" 'owner: sess-cccccccc-3'
+awk '/^## Receipts$/{r=1} END{exit !r}' "$of" || fail "adopt damaged the request"
+req status "$oid" dropped "test" > /dev/null
+CLAUDE_CODE_SESSION_ID=sess-dddddddd-4 req adopt "$oid" 2>/dev/null && fail "adopt took over a closed request"
+CLAUDE_CODE_SESSION_ID=sess-dddddddd-4 req adopt R-9999 2>/dev/null && fail "adopt took a missing request"
+rid=$(echo "retro" | req new --retro --mission m9); has "director/requests/open/$rid.md" 'kind: retro'; has "director/requests/open/$rid.md" 'mission: m9'
+echo x | req new --bogus 2>/dev/null && fail "req new accepted an unknown flag"
+req status "$rid" dropped "test" > /dev/null
 
 # report-check stop hook
 rc() { jq -n --arg m "$1" --arg c "$T" --argjson a "${2:-false}" '{last_assistant_message: $m, cwd: $c, stop_hook_active: $a}' | "$HERE/report-check"; }
@@ -314,7 +342,7 @@ DIRECTOR_BIN=$B "$HERE/link" > /dev/null 2>&1 && fail "link replaced a real fold
 
 # hc-worker: refuses outside Herdr, without a role file, or in an untrusted folder; else runs hc
 H=$T/hc; mkdir -p "$H/bin" "$H/cfg" "$H/proj/sub/.claude/agents" "$H/other/.claude/agents"
-printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/args"; pwd -P > "%s/cwd"\n' "$H" "$H" > "$H/bin/hc"; chmod +x "$H/bin/hc"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/args"; pwd -P > "%s/cwd"; [ -n "$FAKE_ADDR" ] && printf "{\\"address\\":\\"%%s\\"}\\n" "$FAKE_ADDR"; exit 0\n' "$H" "$H" > "$H/bin/hc"; chmod +x "$H/bin/hc"
 touch "$H/proj/sub/.claude/agents/builder.md" "$H/other/.claude/agents/builder.md"
 jq -n --arg p "$H/proj" '{projects: {($p): {hasTrustDialogAccepted: true}}}' > "$H/cfg/.claude.json"
 hcw() { local d=$1; shift; (cd "$d" && PATH=$H/bin:$PATH CLAUDE_CONFIG_DIR=$H/cfg "$HERE/hc-worker" "$@"); }
@@ -332,8 +360,92 @@ echo "Report: director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo ../nerea
 echo "Report: $HOMEP/director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo ../nerea infra-builder-x infra-builder sonnet medium || fail "hc-worker --repo refused a good brief"
 [[ $(cat "$H/cwd") == "$(cd "$H/proj/nerea" && pwd -P)" ]] || fail "hc-worker --repo ran in $(cat "$H/cwd")"
 has "$H/args" 'infra-builder-x'
+# workers.tsv: one line per worker in the home project, with the session id the worker was started with
+[[ ! -e $H/proj/home/director/workers.tsv ]] || rm "$H/proj/home/director/workers.tsv"
+echo "Report: $HOMEP/director/reports/R-0001-x.md" | FAKE_ADDR=t9 CLAUDE_CODE_SESSION_ID=dir-sess-1 hcw "$H/proj/home" --repo ../nerea infra-builder-y infra-builder sonnet medium > "$H/stdout" || fail "hc-worker failed"
+grep -q '"address":"t9"' "$H/stdout" || fail "hc-worker hid hc's output: $(cat "$H/stdout")"
+wsid=$(grep -A1 -x -- '--session-id' "$H/args" | tail -1)
+[[ $wsid =~ ^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$ ]] || fail "hc-worker passed no session id to claude: $(cat "$H/args")"
+[[ $(wc -l < "$H/proj/home/director/workers.tsv" | tr -d " ") == 1 ]] || fail "workers.tsv: $(cat "$H/proj/home/director/workers.tsv")"
+[[ ! -e $H/proj/nerea/director/workers.tsv ]] || fail "workers.tsv written in the other repo"
+IFS=$'\t' read -r w_t w_name w_role w_cwd w_sid w_term w_dir < "$H/proj/home/director/workers.tsv"
+[[ $w_t =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$ && $w_name == infra-builder-y && $w_role == infra-builder && $w_cwd == "$(cd "$H/proj/nerea" && pwd -P)" && $w_sid == "$wsid" && $w_term == t9 && $w_dir == dir-sess-1 ]] || fail "workers.tsv fields: $(cat "$H/proj/home/director/workers.tsv")"
+echo "Report: $HOMEP/director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo ../nerea infra-builder-z infra-builder sonnet medium || fail "hc-worker failed with no terminal address"
+[[ $(wc -l < "$H/proj/home/director/workers.tsv" | tr -d " ") == 2 ]] || fail "workers.tsv did not grow"
+[[ $(tail -1 "$H/proj/home/director/workers.tsv" | awk -F'\t' '{print NF ":" $6 ":" $7}') == "7::" ]] || fail "workers.tsv line without terminal or director session: $(tail -1 "$H/proj/home/director/workers.tsv")"
+echo brief | hcw "$H/proj/home" b norole sonnet medium 2>/dev/null || true; [[ $(wc -l < "$H/proj/home/director/workers.tsv" | tr -d " ") == 2 ]] || fail "a refused worker was recorded"
 echo "Report: $HOMEP/director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo ../missing ib infra-builder sonnet medium 2>/dev/null && fail "hc-worker --repo ran in a missing folder"
 echo "Report: $HOMEP/director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo "$H/other" ib builder sonnet medium 2>/dev/null && fail "hc-worker --repo ran in an untrusted folder"
 unset HC_TERMINAL_ID
+
+# director-retro, on a synthetic config dir: a director session with a subagent and a Herdr worker in another project folder
+cd "$T"; RR=$T/retro-home; CFG=$T/cfg; mkdir -p "$RR/director/requests/open" "$RR/director/requests/closed" "$RR/director/reports"
+touch "$RR/DIRECTOR.md"; RR=$(cd "$RR" && pwd -P)
+j() { jq -nc "$@"; }
+PD=$CFG/projects/$(printf '%s' "$RR" | sed 's/[^A-Za-z0-9-]/-/g'); mkdir -p "$PD/D1/subagents" "$CFG/projects/-elsewhere"
+{ j '{type:"user",timestamp:"2026-11-23T10:00:00.000Z",origin:{kind:"human"},message:{content:"fix the flaky deploy, PROJ-5"}}'
+  j '{type:"user",isMeta:true,message:{content:"<system-reminder>not a message</system-reminder>"}}'
+  j '{type:"user",origin:{kind:"task-notification"},message:{content:"<task-notification>x</task-notification>"}}'
+  j '{type:"user",origin:{kind:"human"},message:{content:"no, use the staging bucket"}}'
+  j '{type:"assistant",timestamp:"2026-11-23T10:01:00.000Z",message:{content:[{type:"tool_use",id:"tu1",name:"Bash",input:{command:"~/.local/share/director/bin/req status R-0001 in-flight"}},{type:"tool_use",id:"tu2",name:"Bash",input:{command:"false"}},{type:"tool_use",id:"tu3",name:"Edit",input:{}}]}}'
+  j '{type:"user",message:{content:[{type:"tool_result",tool_use_id:"tu1",content:"ok"}]}}'
+  j '{type:"user",message:{content:[{type:"tool_result",tool_use_id:"tu2",is_error:true,content:"Exit code 2\nboom: no such file\nmore"}]}}'
+  j '{type:"user",toolDenialKind:"automode-blocked",permissionDecision:{decision:"reject"},message:{content:[{type:"tool_result",tool_use_id:"tu3",is_error:true,content:"Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Destructive]. If you have other tasks, go on."}]}}'
+  j '{type:"user",isMeta:true,message:{content:"Stop hook feedback:\nYour reply is 24 lines. The full report is in x."}}'
+  j '{type:"user",isMeta:true,message:{content:"Stop hook feedback:\nYour reply is 31 lines. The full report is in x."}}'
+  j '{type:"system",subtype:"turn_duration",durationMs:60000,timestamp:"2026-11-23T11:30:00.000Z"}'
+} > "$PD/D1.jsonl"
+{ j '{type:"user",message:{content:"Investigate the cache"}}'; j '{type:"assistant",message:{content:[{type:"tool_use",id:"s1",name:"Read",input:{}}]}}'; } > "$PD/D1/subagents/agent-aa.jsonl"
+echo '{"agentType":"verifier","description":"Check the PR"}' > "$PD/D1/subagents/agent-aa.meta.json"
+{ j '{type:"user",message:{content:"Build the fix"}}'; j '{type:"user",isMeta:true,message:{content:"Stop hook feedback:\nWrite your full report to a file."}}'; } > "$CFG/projects/-elsewhere/W1.jsonl"
+printf '2026-11-23T10:05:00Z\tbuilder-x\tbuilder\t/elsewhere\tW1\tt9\tD1\n2026-11-23T10:06:00Z\tother-w\tbuilder\t/elsewhere\tW2\tt8\tD9\n' > "$RR/director/workers.tsv"
+j '{type:"user",origin:{kind:"human"},message:{content:"an older session"}}' > "$PD/D2.jsonl"; touch -t 202401010000 "$PD/D2.jsonl"
+mkreq() { printf -- '---\nid: %s\ndate: 2026-11-23\nstatus: %s\nmission: %s\n%s---\n\n## Request\n%s\n\n## Addenda\n\n## Outcome\n%s\n\n## Receipts\n' "$1" "$2" "$3" "$4" "$5" "$6" > "$RR/director/requests/$7/$1.md"; }
+mkreq R-0001 done m1 'owner: D1
+' "fix PROJ-5 deploy" "2026-11-23: rework (builder): verify failed" closed
+mkreq R-0002 open none '' "again PROJ-5, other cause" "" open
+mkreq R-0003 done none 'kind: retro
+' "retro" "" closed; touch -t 202501010000 "$RR/director/requests/closed/R-0003.md"
+printf 'Done.\nNext time: a staging bucket name in the role file would have saved a question.\n' > "$RR/director/reports/R-0001-builder.md"
+rt() { (cd "$RR" && CLAUDE_CONFIG_DIR=$CFG "$HERE/director-retro" "$@"); }
+out=$(rt --session D1) || fail "director-retro failed: $out"
+for want in "session D1" "transcript: $PD/D1.jsonl" "transcript: $CFG/projects/-elsewhere/W1.jsonl" "turns 1, active 1m0s, wall 1h30m" 'user messages (2):' '- fix the flaky deploy, PROJ-5' '- no, use the staging bucket' 'tools: Bash×2 Edit×1' \
+  'failed tool calls (1):' '- Bash: Exit code 2 | boom: no such file' 'denied (1):' '- Edit: auto mode: Reason: [Destructive].' 'stop hook blocks (2):' 'Your reply is N lines. The full report is in x. ×2' \
+  '### subagent verifier: Check the PR' '- Investigate the cache' '### herdr worker builder-x (builder, t9' '- Build the fix' 'Write your full report to a file.' \
+  'R-0001  done' 'rework=1' 'R-0002' 'PROJ-5: R-0001, R-0002' 'R-0001-builder Next time: a staging bucket name' '## req stats'; do
+  grep -qF -- "$want" <<< "$out" || fail "director-retro output lacks: $want
+$out"
+done
+grep -qF 'not a message' <<< "$out" && fail "director-retro showed a system reminder as a user message"
+grep -qF 'task-notification' <<< "$out" && fail "director-retro showed a task notification as a user message"
+grep -qF 'other-w' <<< "$out" && fail "director-retro listed another director's worker"
+grep -qF 'an older session' <<< "$out" && fail "director-retro read a session outside its scope"
+# the current session is the default scope
+out=$(CLAUDE_CODE_SESSION_ID=D1 rt) || fail "default scope failed"; grep -qF 'director session D1' <<< "$out" || fail "default scope is not the current session"
+rt > /dev/null 2>&1 && fail "director-retro ran with no scope"
+out=$(rt --help); grep -qF -- '--since-last' <<< "$out" && grep -qF 'Usage: director-retro' <<< "$out" || fail "director-retro --help: $out"
+grep -q '^set -' <<< "$out" && fail "director-retro --help printed code"
+rt --session NOPE > /dev/null 2>&1 && fail "director-retro accepted a session with no transcript"
+# limits: messages cut, and the output says so
+out=$(rt --session D1 --msgs 1 --clip 12); grep -qF 'user messages (2), first 1:' <<< "$out" || fail "--msgs did not bound messages: $out"
+grep -qF -- '- fix the flak…' <<< "$out" || fail "--clip did not cut: $out"
+# a mission, a theme, and everything since the last retro
+out=$(rt --mission m1) || fail "--mission failed"; grep -qF 'director session D1' <<< "$out" || fail "--mission missed the session that owns its request"
+out=$(rt --theme 'other CAUSE') || fail "--theme failed"; grep -qF 'R-0002' <<< "$out" || fail "--theme missed a request"
+rt --mission nothing > /dev/null 2>&1 && fail "--mission with no request succeeded"
+out=$(rt --since-last) || fail "--since-last failed: $out"
+grep -qF 'retro R-0003 closed' <<< "$out" || fail "--since-last did not name the retro: $out"
+grep -qF 'director session D1' <<< "$out" || fail "--since-last missed a session after the retro"
+grep -qF 'an older session' <<< "$out$(grep -F 'director session D2' <<< "$out")" && fail "--since-last read a session before the retro"
+out=$(rt --since 2025-06-01) || fail "--since failed"; grep -qF 'director session D1' <<< "$out" || fail "--since missed a session"
+rm "$RR/director/requests/closed/R-0003.md"
+rt --since-last > /dev/null 2>&1 && fail "--since-last worked with no retro request"
+# a transcript it cannot read does not stop the digest
+echo 'not json' > "$PD/D3.jsonl"; out=$(rt --session D3) || fail "director-retro died on a broken transcript"; grep -qF 'could not read' <<< "$out" || fail "broken transcript not reported: $out"
+rm "$PD/D3.jsonl"
+# director-audit finds the latest session of the current directory through the shared lookup
+out=$(cd "$RR" && CLAUDE_CONFIG_DIR=$CFG "$HERE/director-audit" 2>&1) || fail "director-audit found no session: $out"
+grep -qF 'session: ' <<< "$out" || fail "director-audit output: $out"
+(cd "$RR" && CLAUDE_CONFIG_DIR=$T/nocfg "$HERE/director-audit" > /dev/null 2>&1) && fail "director-audit ran with no session"
 
 echo "all tests passed"

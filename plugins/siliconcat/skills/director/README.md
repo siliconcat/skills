@@ -29,13 +29,15 @@ What it keeps in the project, all excluded from git through `.git/info/exclude`:
 - `DIRECTOR.md`: hard rules, standing approvals and missions.
 - `director/requests/`: one file per request, with your exact words, the workers, links to PRs, runs and tickets, and what it is waiting on from you.
 - `director/reports/`: each worker's full report.
+- `director/workers.tsv`: the Herdr workers it started, with their session ids, for retros.
 - Role files in `.claude/agents/` (Claude Code) or `.codex/agents/` (Codex).
 
 ## What comes with it
 
 - `req`, the script that keeps the request files (`req help`), `report-check`, a stop hook that holds workers to a short reply plus a report file, `issue-check`, a stop hook that keeps a build worker from leaving its issue assigned and `ready-for-agent` with no open PR, and `skill-check`, a stop hook that keeps a build worker from finishing until it has loaded the skills its role names (say, a TDD and a code-review skill). The director links them at `~/.local/share/director/bin` on each start, so role files and hooks keep working across upgrades.
 - With the `siliconcat` plugin in Claude Code, a band above the prompt listing what the director is waiting on from you, with each request and how long it has waited.
-- `director-audit` (Claude Code), which reports how a session spawned and reused its workers.
+- `director-audit` (Claude Code), which reports how a session spawned and reused its workers, and `director-retro`, which digests sessions and their workers for a retro ([retro.md](retro.md)).
+- Request owners: `req new` records the Claude Code session that made a request, and `req open` says whether it is yours, so two directors can share one home repo; `req adopt` takes one over.
 
 Claude Code and Codex differ in what a role can carry; [codex.md](codex.md) lists what Codex lacks (per-role tool lists, turn caps, worktree isolation, the band) and what stands in for it.
 
@@ -47,4 +49,4 @@ Needs `bash`, `git`, `jq` and `perl`; with git older than 2.39, `req prune` can'
 
 ## Develop
 
-From this folder: `scripts/test.sh` tests `req`, `report-check`, `issue-check`, `skill-check`, `director-audit`, `link` and `hc-worker`. The band is tested with the plugin: see its [README](../../README.md).
+From this folder: `scripts/test.sh` tests `req`, `report-check`, `issue-check`, `skill-check`, `director-audit`, `director-retro`, `link` and `hc-worker`. The band is tested with the plugin: see its [README](../../README.md).
