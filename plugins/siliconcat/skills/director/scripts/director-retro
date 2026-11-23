@@ -14,7 +14,7 @@
 #   --clip N          characters kept of a message or error line (default 240)
 #   --max-sessions N  director sessions digested, newest first (default 12; at most 15 workers each)
 #
-# Per session: the user's messages, tool calls by name, failed tool calls (first error line), permission
+# Per session: the transcript path, the user's messages, tool calls by name, failed tool calls (first error line), permission
 # or auto-mode denials, Stop hook blocks with their reasons, turns and wall time. Workers are the
 # session's subagents and the Herdr workers listed in director/workers.tsv (hc-worker writes it; the
 # transcript is found by session id, in any project folder). Then the requests in scope with rework,
@@ -113,6 +113,7 @@ secs() { local s=$1; if [[ $s -ge 3600 ]]; then echo "$((s/3600))h$((s%3600/60))
 digest() {
   echo "$2"
   [[ -f $1 ]] || { echo "  transcript not found"; return; }
+  echo "  transcript: $1"
   jq -n -r --argjson maxmsg "$3" --argjson clip "$clip" --argjson maxfail 8 --argjson maxden 6 --argjson maxtools 12 --argjson maxhooks 5 '
     def clipn($n): gsub("\\s+"; " ") | if length > $n then .[0:$n] + "…" else . end;
     def txt: if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join(" ")) end;
@@ -193,7 +194,7 @@ for s in ${dirs[@]+"${dirs[@]}"}; do
   [[ $n -lt $maxsess ]] || { echo "(${#dirs[@]} director sessions in scope; $maxsess shown: --max-sessions)"; echo; break; }
   n=$((n+1))
   sf=$(session_file "$s") || { echo "## director session $s: no transcript"; continue; }
-  digest "$sf" "## director session $s ($(basename "$(dirname "$sf")"))" "$msgs"
+  digest "$sf" "## director session $s" "$msgs"
   w=0
   while IFS= read -r af; do
     [[ -n $af ]] || continue

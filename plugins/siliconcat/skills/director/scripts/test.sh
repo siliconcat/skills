@@ -409,7 +409,7 @@ mkreq R-0003 done none 'kind: retro
 printf 'Done.\nNext time: a staging bucket name in the role file would have saved a question.\n' > "$RR/director/reports/R-0001-builder.md"
 rt() { (cd "$RR" && CLAUDE_CONFIG_DIR=$CFG "$HERE/director-retro" "$@"); }
 out=$(rt --session D1) || fail "director-retro failed: $out"
-for want in "session D1" "turns 1, active 1m0s, wall 1h30m" 'user messages (2):' '- fix the flaky deploy, PROJ-5' '- no, use the staging bucket' 'tools: Bash×2 Edit×1' \
+for want in "session D1" "transcript: $PD/D1.jsonl" "transcript: $CFG/projects/-elsewhere/W1.jsonl" "turns 1, active 1m0s, wall 1h30m" 'user messages (2):' '- fix the flaky deploy, PROJ-5' '- no, use the staging bucket' 'tools: Bash×2 Edit×1' \
   'failed tool calls (1):' '- Bash: Exit code 2 | boom: no such file' 'denied (1):' '- Edit: auto mode: Reason: [Destructive].' 'stop hook blocks (2):' 'Your reply is N lines. The full report is in x. ×2' \
   '### subagent verifier: Check the PR' '- Investigate the cache' '### herdr worker builder-x (builder, t9' '- Build the fix' 'Write your full report to a file.' \
   'R-0001  done' 'rework=1' 'R-0002' 'PROJ-5: R-0001, R-0002' 'R-0001-builder Next time: a staging bucket name' '## req stats'; do

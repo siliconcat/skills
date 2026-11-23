@@ -1,18 +1,10 @@
-# Closing a mission and reviewing rules
+# Closing a mission and sharing a role
 
-Read this when a mission closes, when the user asks for a rules review, or when `req lint` says `DIRECTOR.md` is over budget.
-
-## Rules and roles review
-
-Rules harden and start limiting the system.
-
-1. List every rule across `DIRECTOR.md` and the role files, and propose which to drop, merge, or turn into a real check.
-2. Review the roles with evidence: `director-audit` on the mission's sessions, `req stats` for which roles needed rework, and `grep workers: director/requests/closed/*.md` for which were used. Propose which background to move into a role file, which role to split by area, and which unused roles can go.
-3. Change them only after the user says yes.
+Read this when a mission closes, or when the user asks to share a role with the team.
 
 ## Close the mission
 
-Its outcome goes to the ticket, its open requests are closed or dropped, and its line in `DIRECTOR.md` is deleted. Then run the review above.
+Its outcome goes to the ticket, its open requests are closed or dropped, and its line in `DIRECTOR.md` is deleted. Then run a retro on the mission (`retro.md`: `director-retro --mission NAME`), which includes the review of rules and roles.
 
 ## Share a role with the team
 

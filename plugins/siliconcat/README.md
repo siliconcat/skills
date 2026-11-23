@@ -32,7 +32,7 @@ Start a new session after installing.
 From this folder:
 
 ```
-skills/director/scripts/test.sh   # req, report-check, director-audit, link
+skills/director/scripts/test.sh   # req, report-check, director-audit, director-retro, link, hc-worker
 claude plugin test .              # the band
 claude plugin validate .          # the plugin
 ```
