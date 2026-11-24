@@ -356,6 +356,10 @@ DIRECTOR_BIN=$B "$HERE/link" > /dev/null || fail "link failed"
 DIRECTOR_BIN=$B "$HERE/link" > /dev/null || fail "link not idempotent"
 rm "$B" && mkdir -p "$B"
 DIRECTOR_BIN=$B "$HERE/link" > /dev/null 2>&1 && fail "link replaced a real folder"
+rm -rf "${B:?}"
+DIRECTOR_BIN=$B HC_TERMINAL_ID= "$HERE/link" | grep -q Herdr && fail "link announced Herdr outside it"
+mkdir -p "$T/fakehc"; printf "#!/bin/sh\n" > "$T/fakehc/hc"; chmod +x "$T/fakehc/hc"
+DIRECTOR_BIN=$B HC_TERMINAL_ID=t9 PATH=$T/fakehc:$PATH "$HERE/link" | grep -q "Herdr terminal t9: read hc.md" || fail "link did not announce Herdr"
 
 # hc-worker: refuses outside Herdr, without a role file, or in an untrusted folder; else runs hc
 H=$T/hc; mkdir -p "$H/bin" "$H/cfg" "$H/proj/sub/.claude/agents" "$H/other/.claude/agents"
