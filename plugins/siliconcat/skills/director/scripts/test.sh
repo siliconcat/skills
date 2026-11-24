@@ -377,6 +377,7 @@ echo brief | hcw "$H/proj/sub" b verifier sonnet medium 2>/dev/null && fail "hc-
 echo brief | hcw "$H/other" b builder sonnet medium 2>/dev/null && fail "hc-worker ran in an untrusted folder"
 printf 'the brief\nline 2' | hcw "$H/proj/sub" builder-x builder sonnet high -- --permission-mode auto || fail "hc-worker refused a trusted subfolder"
 has "$H/args" 'builder-x'; has "$H/args" 'director.role=builder'; has "$H/args" '--permission-mode'
+has "$H/args" "CLAUDE_CONFIG_DIR=$H/cfg"
 [[ $(tail -2 "$H/args") == $'the brief\nline 2' ]] || fail "brief not passed last: $(cat "$H/args")"
 # --repo: the worker starts in the other repo with its role; the report path must point home
 mkdir -p "$H/proj/home" "$H/proj/nerea/.claude/agents"; touch "$H/proj/nerea/.claude/agents/infra-builder.md"

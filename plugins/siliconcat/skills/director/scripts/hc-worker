@@ -59,7 +59,9 @@ brief=$(cat)
 sid=$(uuidgen | tr 'A-Z' 'a-z')
 claude_args=(--agent "$role" --model "$model" --effort "$effort" --session-id "$sid" "$@")
 if [[ $backend == hc ]]; then
-  out=$(hc run --bg --name "$name" --label "director.role=$role" claude "${claude_args[@]}" "$brief") || { printf '%s\n' "$out" >&2; exit 1; }
+  # hc starts the command outside the user's shell profile, so without this the worker lands on the default Claude profile.
+  launch=(claude); [[ -n ${CLAUDE_CONFIG_DIR:-} ]] && launch=(env "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR" claude)
+  out=$(hc run --bg --name "$name" --label "director.role=$role" "${launch[@]}" "${claude_args[@]}" "$brief") || { printf '%s\n' "$out" >&2; exit 1; }
   term=$(jq -r '.address // empty' <<< "$out" 2>/dev/null || true)
 else
   # A tab of its own beside the director's, so many workers never squeeze the director's pane; no focus steal.
