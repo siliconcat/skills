@@ -13,7 +13,9 @@ fi
 mkdir -p "$(dirname "$dest")"
 [[ $(readlink "$dest" 2>/dev/null || true) == "$here" ]] || ln -sfn "$here" "$dest"
 echo "director scripts: $dest -> $here"
-# The director can't see its environment, so say here, in a run it always makes, when hc.md applies.
+# The director can't see its environment, so say here, in a run it always makes, when hc.md applies (the Herdr app, or the standalone herdr server).
 if [[ -n ${HC_TERMINAL_ID:-} ]] && command -v hc > /dev/null; then
   echo "Herdr terminal $HC_TERMINAL_ID: read hc.md now and start workers with hc-worker, not subagents"
+elif [[ ${HERDR_ENV:-} == 1 && -n ${HERDR_PANE_ID:-} ]] && command -v herdr > /dev/null; then
+  echo "Herdr pane $HERDR_PANE_ID: read hc.md now and start workers with hc-worker, not subagents"
 fi

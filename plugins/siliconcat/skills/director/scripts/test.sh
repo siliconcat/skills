@@ -357,9 +357,13 @@ DIRECTOR_BIN=$B "$HERE/link" > /dev/null || fail "link not idempotent"
 rm "$B" && mkdir -p "$B"
 DIRECTOR_BIN=$B "$HERE/link" > /dev/null 2>&1 && fail "link replaced a real folder"
 rm -rf "${B:?}"
+unset HERDR_ENV HERDR_PANE_ID HERDR_WORKSPACE_ID  # the suite may itself run in a herdr pane
 DIRECTOR_BIN=$B HC_TERMINAL_ID= "$HERE/link" | grep -q Herdr && fail "link announced Herdr outside it"
 mkdir -p "$T/fakehc"; printf "#!/bin/sh\n" > "$T/fakehc/hc"; chmod +x "$T/fakehc/hc"
 DIRECTOR_BIN=$B HC_TERMINAL_ID=t9 PATH=$T/fakehc:$PATH "$HERE/link" | grep -q "Herdr terminal t9: read hc.md" || fail "link did not announce Herdr"
+printf '#!/bin/sh\n' > "$T/fakehc/herdr"; chmod +x "$T/fakehc/herdr"
+DIRECTOR_BIN=$B HC_TERMINAL_ID= HERDR_ENV=1 HERDR_PANE_ID=w1:p2 PATH=$T/fakehc:$PATH "$HERE/link" | grep -q "Herdr pane w1:p2: read hc.md" || fail "link did not announce the herdr server"
+DIRECTOR_BIN=$B HERDR_ENV=1 PATH=$T/fakehc:$PATH "$HERE/link" | grep -q Herdr && fail "link announced herdr without a pane"
 
 # hc-worker: refuses outside Herdr, without a role file, or in an untrusted folder; else runs hc
 H=$T/hc; mkdir -p "$H/bin" "$H/cfg" "$H/proj/sub/.claude/agents" "$H/other/.claude/agents"
@@ -398,6 +402,24 @@ echo brief | hcw "$H/proj/home" b norole sonnet medium 2>/dev/null || true; [[ $
 echo "Report: $HOMEP/director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo ../missing ib infra-builder sonnet medium 2>/dev/null && fail "hc-worker --repo ran in a missing folder"
 echo "Report: $HOMEP/director/reports/R-0001-x.md" | hcw "$H/proj/home" --repo "$H/other" ib builder sonnet medium 2>/dev/null && fail "hc-worker --repo ran in an untrusted folder"
 unset HC_TERMINAL_ID
+# herdr server backend: a tab of its own, a named agent, the brief as a prompt, the pane id in workers.tsv
+printf '#!/bin/sh\nprintf "%%s\\n" "--" "$@" >> "%s/herdr.log"\ncase "$1 $2" in "tab create") echo "{\\"result\\":{\\"tab\\":{\\"tab_id\\":\\"w1:t5\\"},\\"root_pane\\":{\\"pane_id\\":\\"w1:p9\\"}}}";; esac\n' "$H" > "$H/bin/herdr"; chmod +x "$H/bin/herdr"
+hsw() { HERDR_ENV=1 HERDR_PANE_ID=w1:p2 HERDR_WORKSPACE_ID=w1 hcw "$@"; }
+rm -f "$H/proj/home/director/workers.tsv" "$H/args"
+echo brief | HERDR_ENV=1 hcw "$H/proj/sub" b builder sonnet medium 2>/dev/null && fail "hc-worker used herdr without a pane id"
+echo brief | hsw "$H/proj/sub" Upper builder sonnet medium 2>/dev/null && fail "hc-worker took a name herdr refuses"
+echo brief | hsw "$H/other" b builder sonnet medium 2>/dev/null && fail "hc-worker herdr ran in an untrusted folder"
+[[ ! -e $H/herdr.log ]] || fail "herdr was called for a refused worker: $(cat "$H/herdr.log")"
+echo "Report: $HOMEP/director/reports/R-0001-x.md" | CLAUDE_CODE_SESSION_ID=dir-sess-2 hsw "$H/proj/home" --repo ../nerea infra-builder-h infra-builder sonnet medium -- --permission-mode auto > "$H/stdout" || fail "hc-worker herdr failed"
+[[ ! -e $H/args ]] || fail "hc-worker ran hc inside a herdr pane"
+grep -q '"pane_id":"w1:p9"' "$H/stdout" || fail "hc-worker herdr output: $(cat "$H/stdout")"
+has "$H/herdr.log" 'infra-builder-h'; has "$H/herdr.log" '--no-focus'; has "$H/herdr.log" '--permission-mode'; has "$H/herdr.log" 'w1:p9'
+has "$H/herdr.log" "Report: $HOMEP/director/reports/R-0001-x.md"
+IFS=$'\t' read -r w_t w_name w_role w_cwd w_sid w_term w_dir < "$H/proj/home/director/workers.tsv"
+[[ $w_name == infra-builder-h && $w_term == w1:p9 && $w_dir == dir-sess-2 && $w_cwd == "$(cd "$H/proj/nerea" && pwd -P)" ]] || fail "workers.tsv herdr fields: $(cat "$H/proj/home/director/workers.tsv")"
+grep -qxF -- "$w_sid" "$H/herdr.log" || fail "herdr worker started with another session id than workers.tsv"
+echo brief | HC_TERMINAL_ID=t1 hsw "$H/proj/sub" builder-y builder sonnet medium || fail "hc-worker with both set"
+[[ -e $H/args ]] || fail "hc-worker did not pick hc when HC_TERMINAL_ID is set"
 
 # director-retro, on a synthetic config dir: a director session with a subagent and a Herdr worker in another project folder
 cd "$T"; RR=$T/retro-home; CFG=$T/cfg; mkdir -p "$RR/director/requests/open" "$RR/director/requests/closed" "$RR/director/reports"

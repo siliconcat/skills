@@ -29,7 +29,7 @@ What it keeps in the project, all excluded from git through `.git/info/exclude`:
 - `DIRECTOR.md`: hard rules, standing approvals and missions.
 - `director/requests/`: one file per request, with your exact words, the workers, links to PRs, runs and tickets, and what it is waiting on from you.
 - `director/reports/`: each worker's full report.
-- `director/workers.tsv`: the Herdr workers it started, with their session ids, for retros.
+- `director/workers.tsv`: the terminal workers it started, with their session ids, for retros.
 - Role files in `.claude/agents/` (Claude Code) or `.codex/agents/` (Codex).
 
 ## What comes with it
@@ -41,7 +41,7 @@ What it keeps in the project, all excluded from git through `.git/info/exclude`:
 
 Claude Code and Codex differ in what a role can carry; [codex.md](codex.md) lists what Codex lacks (per-role tool lists, turn caps, worktree isolation, the band) and what stands in for it.
 
-In a terminal of the Herdr app, workers run as Herdr terminals you can watch, started by `hc-worker`, which refuses a folder where the worker would wait at a trust prompt; [hc.md](hc.md) says what changes.
+In a terminal of the Herdr app or a pane of the standalone `herdr` server, workers run as terminals you can watch, started by `hc-worker`, which refuses a folder where the worker would wait at a trust prompt; [hc.md](hc.md) says what changes.
 
 Optional: with [savvy-progress](https://github.com/johnnyvizz/claude-kit) installed, Claude Code workers report their steps as a progress bar. Agent teams (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) should stay off: the director's workers are subagents.
 
