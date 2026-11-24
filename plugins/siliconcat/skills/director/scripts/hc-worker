@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Start a director worker as a Herdr terminal:
+# Start a director worker as a visible terminal, in the Herdr app (hc) or in the standalone herdr server:
 #   hc-worker [--repo <dir>] <name> <role> <model> <effort> [-- <claude args>...]
+# The backend is hc when HC_TERMINAL_ID is set, herdr when HERDR_ENV=1 and HERDR_PANE_ID are set; else it refuses.
 # The brief comes on stdin. --repo starts the worker in another repo, with that repo's own role,
 # CLAUDE.md and settings. It refuses, with exit 2, anything that would leave the worker waiting
 # at a prompt only the user can answer, so the director spawns a subagent or asks the user instead.
 # Each worker is appended to director/workers.tsv in the home project, tab-separated: time (UTC), name,
-# role, cwd, worker session id, Herdr terminal, director session id (director-retro reads it).
+# role, cwd, worker session id, terminal (hc terminal id, or herdr pane id), director session id (director-retro reads it).
 set -euo pipefail
 
 usage="usage: hc-worker [--repo <dir>] <name> <role> <model> <effort> [-- <claude args>...] < brief"
@@ -20,8 +21,17 @@ fi
 name=$1 role=$2 model=$3 effort=$4; shift 4
 [[ ${1:-} == -- ]] && shift
 
-[[ -n ${HC_TERMINAL_ID:-} ]] || refuse "not in a Herdr terminal (HC_TERMINAL_ID unset): spawn a subagent"
-command -v hc >/dev/null || refuse "hc is not on the PATH: spawn a subagent"
+if [[ -n ${HC_TERMINAL_ID:-} ]]; then
+  backend=hc
+  command -v hc >/dev/null || refuse "hc is not on the PATH: spawn a subagent"
+elif [[ ${HERDR_ENV:-} == 1 && -n ${HERDR_PANE_ID:-} ]]; then
+  backend=herdr
+  command -v herdr >/dev/null || refuse "herdr is not on the PATH: spawn a subagent"
+  # herdr names an agent by this pattern and keeps it unique among live agents.
+  [[ $name =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || refuse "herdr agent names are lowercase letters, digits, - and _, at most 32, starting with a letter: got $name"
+else
+  refuse "not in a Herdr terminal (neither HC_TERMINAL_ID nor HERDR_ENV=1 with HERDR_PANE_ID is set): spawn a subagent"
+fi
 [[ -f .claude/agents/$role.md ]] || refuse "no role file .claude/agents/$role.md in $PWD: run hc-worker from the project root, or pass --repo"
 
 # Claude Code asks once per folder whether to trust it; a trusted folder covers its subfolders.
@@ -47,9 +57,22 @@ brief=$(cat)
   refuse "with --repo, the brief must name the report as an absolute path under $home/director/reports/"
 # The worker's session id is chosen here, so director-retro can find its transcript later, in any project folder.
 sid=$(uuidgen | tr 'A-Z' 'a-z')
-out=$(hc run --bg --name "$name" --label "director.role=$role" \
-  claude --agent "$role" --model "$model" --effort "$effort" --session-id "$sid" "$@" "$brief") || { printf '%s\n' "$out" >&2; exit 1; }
+claude_args=(--agent "$role" --model "$model" --effort "$effort" --session-id "$sid" "$@")
+if [[ $backend == hc ]]; then
+  out=$(hc run --bg --name "$name" --label "director.role=$role" claude "${claude_args[@]}" "$brief") || { printf '%s\n' "$out" >&2; exit 1; }
+  term=$(jq -r '.address // empty' <<< "$out" 2>/dev/null || true)
+else
+  # A tab of its own beside the director's, so many workers never squeeze the director's pane; no focus steal.
+  tab=$(herdr tab create ${HERDR_WORKSPACE_ID:+--workspace "$HERDR_WORKSPACE_ID"} --label "$name" --cwd "$PWD" --no-focus) || exit 1
+  term=$(jq -r '.result.root_pane.pane_id' <<< "$tab")
+  # agent start names the agent for agent wait and read; the brief goes in as a prompt, since a shell line has a length limit.
+  { herdr agent start "$name" --kind claude --pane "$term" -- "${claude_args[@]}" >/dev/null &&
+    herdr agent prompt "$name" -- "$brief" >/dev/null; } || { herdr pane close "$term" >/dev/null 2>&1 || true; exit 1; }
+  # Right after the prompt the agent still reads idle, so a first agent wait would return at once: wait for it to start.
+  herdr agent wait "$name" --until working --until blocked --timeout 30000 >/dev/null 2>&1 || true
+  out=$(jq -nc --arg name "$name" --arg pane_id "$term" --arg tab_id "$(jq -r '.result.tab.tab_id' <<< "$tab")" '{name: $name, pane_id: $pane_id, tab_id: $tab_id}')
+fi
 mkdir -p "$home/director"
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$name" "$role" "$(pwd -P)" "$sid" \
-  "$(jq -r '.address // empty' <<< "$out" 2>/dev/null || true)" "${CLAUDE_CODE_SESSION_ID:-}" >> "$home/director/workers.tsv"
+  "$term" "${CLAUDE_CODE_SESSION_ID:-}" >> "$home/director/workers.tsv"
 printf '%s\n' "$out"
