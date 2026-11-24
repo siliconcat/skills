@@ -67,7 +67,7 @@ else
   term=$(jq -r '.result.root_pane.pane_id' <<< "$tab")
   # agent start names the agent for agent wait and read; the brief goes in as a prompt, since a shell line has a length limit.
   { herdr agent start "$name" --kind claude --pane "$term" -- "${claude_args[@]}" >/dev/null &&
-    herdr agent prompt "$name" -- "$brief" >/dev/null; } || { herdr pane close "$term" >/dev/null 2>&1 || true; exit 1; }
+    herdr agent prompt "$name" "$brief" >/dev/null; } || { herdr pane close "$term" >/dev/null 2>&1 || true; exit 1; }
   # Right after the prompt the agent still reads idle, so a first agent wait would return at once: wait for it to start.
   herdr agent wait "$name" --until working --until blocked --timeout 30000 >/dev/null 2>&1 || true
   out=$(jq -nc --arg name "$name" --arg pane_id "$term" --arg tab_id "$(jq -r '.result.tab.tab_id' <<< "$tab")" '{name: $name, pane_id: $pane_id, tab_id: $tab_id}')
