@@ -354,6 +354,11 @@ B=$T/share/bin
 DIRECTOR_BIN=$B "$HERE/link" > /dev/null || fail "link failed"
 [[ $(readlink "$B") == "$HERE" ]] || fail "link points at $(readlink "$B")"
 DIRECTOR_BIN=$B "$HERE/link" > /dev/null || fail "link not idempotent"
+mkplug() { mkdir -p "$T/v/$1/.claude-plugin" "$T/v/$1/skills/director" && cp -R "$HERE" "$T/v/$1/skills/director/" && printf '{\n  "version": "%s"\n}\n' "$1" > "$T/v/$1/.claude-plugin/plugin.json"; }
+mkplug 0.9.10; mkplug 0.9.2; NEW=$T/v/0.9.10/skills/director/scripts OLD=$T/v/0.9.2/skills/director/scripts
+DIRECTOR_BIN=$B "$NEW/link" > /dev/null; out=$(DIRECTOR_BIN=$B "$OLD/link"); [[ $out == *"left as is"* ]] || fail "link did not keep the newer copy"
+[[ $(readlink "$B") == "$NEW" ]] || fail "link went back to an older copy: $(readlink "$B")"
+mv "$T/v/0.9.10" "$T/v/gone"; DIRECTOR_BIN=$B "$OLD/link" > /dev/null; [[ $(readlink "$B") == "$OLD" ]] || fail "link kept a removed copy"
 rm "$B" && mkdir -p "$B"
 DIRECTOR_BIN=$B "$HERE/link" > /dev/null 2>&1 && fail "link replaced a real folder"
 rm -rf "${B:?}"
