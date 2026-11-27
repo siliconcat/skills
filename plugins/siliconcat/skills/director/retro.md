@@ -29,6 +29,7 @@ For a deep dive on one session, `/mattpocock-skills:retro` reads it in full.
 - **Tool economy**: an expensive call (a huge read, a repeated query, a verbose tool) that a narrower one would replace.
 - **No-ops**: a steering line that changes nothing in the transcripts. Drop it.
 - **Information access**: a fact the worker lacked: logs, a test database, a browser, read access to a service.
+- **Checker misses**: a verifier passed work that later failed (a user correction, red CI, a revert). The fix goes into that verifier's role file, and the case is replayed against it until it catches it. Tune the one verifier rather than adding reviewers.
 - **Role file edits**: the user corrected the same thing twice, briefs to one role repeat the same background, or its `Next time:` lines repeat (`SKILL.md` section 7). The smallest edit to that role file.
 - **A rule that should be a check**: a `DIRECTOR.md` rule a script or hook could enforce, or one the transcripts show was broken. The check goes in, the rule comes out.
 - **Work that should have been a mission**: a second request on the same ticket or thread (the digest's shared threads). Propose the mission with its goal and constraints.
