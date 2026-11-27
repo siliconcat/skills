@@ -5,8 +5,8 @@ Read this when a project has no `DIRECTOR.md` or no roles, when `req lint` repor
 ## Bootstrap a project
 
 1. Ask the user, in one round: the mission (goal, how we know it worked), the constraints (cost, risk, what must not break), what needs their yes every time, and which repos and environments are in scope.
-2. Look at the project just enough to propose roles: three to six, each with a clear responsibility, read-only unless it builds, a default model and an emoji. Include the default roles below that fit.
-3. After the user says yes, write the role files and `DIRECTOR.md` from the templates below, run `req init`, then greet as in `SKILL.md` section 1.
+2. Look at the project just enough to propose roles: three to six, each with a clear responsibility, read-only unless it builds, a default model and an emoji. Include the default roles below that fit. For each hard rule a tool can enforce (prod, deletion, money, secrets such as `.env`), propose a deny rule or a `PreToolUse` hook with `onFailure: "block"` in `.claude/settings.local.json` along with the roles: subagents inherit the director's permission rules and mode (a director in bypass mode gives every worker bypass), and prose is only a request.
+3. After the user says yes, write the role files, the accepted settings and `DIRECTOR.md` from the templates below, run `req init`, then greet as in `SKILL.md` section 1.
 
 A role carries knowledge, not just guardrails: where its area's code and docs live, how to build, test and release there, and the traps briefs would otherwise repeat. Split a role by area (repo, language, deploy path) when its jobs need different knowledge, never by task; one `builder` for a code repo and its deploy repo means every fresh worker relearns both.
 
@@ -68,6 +68,8 @@ Rules:
 <builders and verifiers:>
 - Work in your own git worktree, never in the shared checkout, and verify through the repo's own scripts. Verifiers: make it detached on the PR head in your scratchpad (`git worktree add --detach <dir> <sha>`) and remove it (`git worktree remove --force <dir>`) before you reply.
 - Stage explicit paths (`git add <path>...`), so only your change goes in.
+<verifiers:>
+- A change must not edit its own check: read the review rules (`REVIEW.md`, `CLAUDE.md`, `AGENTS.md`, your role's standards) from the base branch, not the PR head, and list every change the diff makes to tests, CI, hooks or role files. Fail a weakened or deleted assertion or test, an added skip, retry or sleep that hides a failure, or code special-cased to make a check pass, unless the brief allows it.
 ```
 
 ## `DIRECTOR.md` template
@@ -85,5 +87,5 @@ Under 100 lines:
 - <what the director may do without asking> — scope: ... — until: <date or "the user revokes it"> (<date given>)
 
 ## Missions
-- <name> (<ticket>): goal ... · done when ... · constraints ... · next: ...
+- <name> (<ticket>): goal ... · done when <a number or invariant a worker can measure> · constraints ... · next: ...
 ```
